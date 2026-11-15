@@ -1,0 +1,1323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClipEditor</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+  :root { --bg:#0f1419; --panel:#1a2129; --panel2:#232c36; --text:#e8ecef; --muted:#8a96a3;
+          --accent:#ff4655; --ok:#3ecf8e; --warn:#f5b041; --line:#2e3944; }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 "Segoe UI",system-ui,sans-serif; }
+  button { background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:6px;
+           padding:6px 12px; font:inherit; cursor:pointer; }
+  button:hover { border-color:var(--muted); }
+  button:disabled { opacity:.45; cursor:default; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  input[type=text], input[type=search] { background:var(--panel2); color:var(--text); border:1px solid var(--line);
+           border-radius:6px; padding:6px 10px; font:inherit; }
+  select.plain, input.plain { background:var(--panel2); color:var(--text); border:1px solid var(--line);
+                              border-radius:6px; padding:4px 8px; font:inherit; }
+  header { display:flex; align-items:center; gap:10px; padding:12px 20px; background:var(--panel); border-bottom:1px solid var(--line); }
+  header h1, header h2 { margin:0; font-size:18px; }
+  header h1 span { color:var(--accent); }
+  .spacer { flex:1; }
+  .small { color:var(--muted); font-size:12px; }
+  .ok { color:var(--ok); }
+  .err { color:var(--warn); }
+  .status { color:var(--muted); padding:8px 20px; font-size:13px; }
+  .status.err { color:var(--warn); }
+  .progress { height:8px; background:var(--panel2); border-radius:4px; overflow:hidden; margin:10px 0 6px; }
+  .progress > div { height:100%; width:0; background:var(--accent); transition:width .3s; }
+  kbd { background:var(--panel2); border:1px solid var(--line); border-radius:3px; padding:0 4px; font-size:11px; }
+
+  /* ---------- library ---------- */
+  #settings { padding:10px 20px; background:var(--panel); border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; }
+  #settings label { display:flex; gap:8px; align-items:center; }
+  #settings input { width:min(420px,70vw); }
+  .tabs { display:flex; gap:4px; padding:14px 20px 0; border-bottom:1px solid var(--line); align-items:flex-end; }
+  .tabs button { border:none; border-bottom:2px solid transparent; border-radius:0; background:none; color:var(--muted); padding:8px 14px; }
+  .tabs button.active { color:var(--text); border-bottom-color:var(--accent); font-weight:600; }
+  .tabs .cnt { background:var(--panel2); border-radius:10px; padding:0 7px; margin-left:6px; font-size:12px; }
+  .tabs .right { margin-left:auto; display:flex; gap:8px; align-items:center; padding-bottom:6px; }
+  .tabs .right button { border:1px solid var(--line); border-radius:6px; background:var(--panel2); color:var(--text); padding:5px 10px; }
+  .tabs .right button.primary { background:var(--accent); border-color:var(--accent); }
+  #libSummary { color:var(--muted); font-size:12px; }
+  #selBar, #batchPanel { padding:10px 20px; background:var(--panel); border-bottom:1px solid var(--line); }
+  #selBar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  #selBar .danger { background:var(--accent); border-color:var(--accent); color:#fff; }
+  #batchList { margin:10px 0; max-height:240px; overflow:auto; }
+  #batchList label { display:flex; gap:8px; align-items:center; padding:4px 0; cursor:pointer; }
+  #batchPanel .opts { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  #bMsg ul { margin:6px 0 0; padding-left:18px; }
+  #grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:14px; padding:6px 20px 30px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; cursor:pointer; }
+  .card:hover { border-color:var(--accent); }
+  .card.broken { cursor:default; opacity:.8; }
+  .card.broken:hover { border-color:var(--line); }
+  .card.sel { outline:2px solid var(--accent); outline-offset:-2px; }
+  .thumb { position:relative; aspect-ratio:16/9; background:#000 center/cover no-repeat; }
+  .thumb .dur { position:absolute; right:6px; bottom:6px; background:#000c; padding:1px 6px; border-radius:4px; font-size:12px; }
+  .thumb .badges { position:absolute; left:6px; top:6px; display:flex; gap:4px; }
+  .thumb .badge { background:var(--ok); color:#06210f; font-weight:700; font-size:11px; padding:2px 7px; border-radius:4px; letter-spacing:.5px; }
+  .thumb .badge.draft { background:var(--warn); color:#2b1d00; }
+  .thumb .noimg { position:absolute; inset:0; display:grid; place-items:center; color:var(--muted); font-size:12px; }
+  .thumb .scrub { position:absolute; left:0; bottom:0; height:3px; background:var(--accent); pointer-events:none; }
+  .card .del, .card .yt { position:absolute; top:6px; padding:3px 8px; font-size:12px; background:#000b;
+                          border-color:transparent; opacity:0; transition:opacity .15s; }
+  .card .del { right:6px; font-size:13px; }
+  .card .yt { right:44px; }
+  .card:hover .del, .card .del:focus, .card:hover .yt, .card .yt:focus { opacity:1; }
+  .card .del:hover, .card .yt:hover { background:var(--accent); }
+  @media (hover:none) { .card .del, .card .yt { opacity:1; } }
+  #grid.selecting .card .del, #grid.selecting .card .yt { display:none; }
+  .card .check { position:absolute; left:6px; bottom:6px; width:22px; height:22px; border-radius:4px; background:#000b;
+                 border:2px solid #fff8; display:grid; place-items:center; font-weight:700; font-size:13px; }
+  .card.sel .check { background:var(--accent); border-color:var(--accent); }
+  .meta { padding:8px 10px; }
+  .meta .nameRow { display:flex; gap:4px; align-items:center; }
+  .meta .name { flex:1; min-width:0; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .meta .star, .meta .noteBtn { background:none; border:none; padding:0 3px; font-size:15px; color:var(--muted); }
+  .meta .star.on { color:var(--warn); }
+  .meta .star:hover, .meta .noteBtn:hover { color:var(--text); border:none; }
+  .meta .note { font-size:12px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .meta .sub { color:var(--muted); font-size:12px; display:flex; justify-content:space-between; gap:6px; }
+  .meta .warn { color:var(--warn); }
+  #toast { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); max-width:min(640px, calc(100vw - 32px));
+           background:var(--panel); border:1px solid var(--accent); border-radius:8px; padding:12px 16px;
+           box-shadow:0 6px 24px #000a; z-index:10; line-height:1.5; }
+  #toast button { margin-left:10px; padding:2px 8px; font-size:12px; }
+
+  /* ---------- editor ---------- */
+  #noteInput { width:min(320px, 30vw); }
+  .ed { display:grid; grid-template-columns:1fr 340px; gap:16px; padding:16px 20px; }
+  @media (max-width:1000px) { .ed { grid-template-columns:1fr; } }
+  video { width:100%; max-height:60vh; background:#000; border-radius:6px; display:block; cursor:pointer; }
+  .transport { display:flex; align-items:center; gap:12px; margin:10px 0; flex-wrap:wrap; }
+  .transport .time { font-variant-numeric:tabular-nums; }
+  .transport .outlen { color:var(--muted); margin-left:auto; }
+  #timeline { position:relative; background:var(--panel2); border:1px solid var(--line);
+              border-radius:6px; cursor:pointer; user-select:none; touch-action:none; overflow:hidden; }
+  #tlScale { position:relative; height:22px; }
+  .lane { position:relative; height:38px; border-top:1px solid var(--line); }
+  .lane canvas { display:block; width:100%; height:100%; }
+  .lane .lname { position:absolute; left:6px; top:2px; font-size:11px; color:var(--text); text-shadow:0 0 3px #000, 0 0 3px #000; pointer-events:none; }
+  .lane.muted canvas { opacity:.25; }
+  #timeline .reg { position:absolute; top:0; bottom:0; pointer-events:none; }
+  #timeline .out { background:#000a; }
+  #timeline .cut { background:repeating-linear-gradient(45deg,#ff465588 0 6px,#ff465533 6px 12px); border-left:1px solid var(--accent); border-right:1px solid var(--accent); }
+  #timeline .edge { width:2px; background:var(--ok); }
+  #timeline .mark { width:2px; background:var(--warn); }
+  #timeline .tick { position:absolute; top:4px; font-size:10px; color:var(--muted); transform:translateX(3px); pointer-events:none; }
+  #timeline .tickline { position:absolute; bottom:0; height:6px; width:1px; background:var(--muted); pointer-events:none; }
+  #ph { position:absolute; top:0; bottom:0; width:2px; background:#fff; pointer-events:none; box-shadow:0 0 4px #fff8; }
+  .tools { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .tools .sep { width:1px; background:var(--line); margin:0 4px; }
+  .hint { color:var(--muted); font-size:12px; margin-top:8px; line-height:1.7; }
+  aside { display:flex; flex-direction:column; gap:14px; }
+  .box { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; }
+  .box h3 { margin:0 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:.8px; color:var(--muted); }
+  .track { display:grid; grid-template-columns:1fr auto; gap:4px 8px; padding:8px 0; border-top:1px solid var(--line); }
+  .track:first-of-type { border-top:none; }
+  .track .tname { font-weight:600; }
+  .track .row { grid-column:1/-1; display:flex; align-items:center; gap:8px; }
+  .track input[type=range] { flex:1; accent-color:var(--accent); }
+  .track .pct { width:48px; text-align:right; font-variant-numeric:tabular-nums; }
+  .track.muted input[type=range], .track.muted .pct { opacity:.35; }
+  .track button.mute.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  #cuts { list-style:none; margin:8px 0 0; padding:0; }
+  #cuts li { display:flex; justify-content:space-between; align-items:center; padding:4px 0; font-variant-numeric:tabular-nums; }
+  #cuts li button { padding:2px 8px; font-size:12px; }
+  .sizeRow { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
+  .sizeRow select, .sizeRow input { background:var(--panel2); color:var(--text); border:1px solid var(--line);
+                                   border-radius:6px; padding:5px 8px; font:inherit; }
+  .sizeRow select { flex:1; min-width:0; }
+  .sizeRow input { width:80px; }
+  #planInfo { margin-bottom:10px; }
+</style>
+</head>
+<body>
+
+<section id="library">
+  <header>
+    <h1>Clip<span>Editor</span></h1>
+    <div class="spacer"></div>
+    <input id="search" type="search" placeholder="Search name or note …">
+    <button id="refresh">Refresh</button>
+    <button id="settingsBtn">⚙ Folders</button>
+  </header>
+  <div id="settings" hidden>
+    <label>Clip folder <input id="folderInput" type="text"></label>
+    <label>Export folder <input id="exportInput" type="text" placeholder="empty = <clip folder>\Edited"></label>
+    <button id="saveFolder">Save</button>
+    <span id="folderMsg" class="small"></span>
+  </div>
+  <div class="tabs">
+    <button data-tab="orig">Originals<span class="cnt" id="cntOrig">0</span></button>
+    <button data-tab="edit">Edited<span class="cnt" id="cntEdit">0</span></button>
+    <div class="right">
+      <span id="libSummary"></span>
+      <select id="sortSel" class="plain" title="Sort order">
+        <option value="date-desc">Date: newest first</option>
+        <option value="date-asc">Date: oldest first</option>
+        <option value="name-asc">Name: A → Z</option>
+        <option value="name-desc">Name: Z → A</option>
+        <option value="size-desc">Size: largest first</option>
+        <option value="size-asc">Size: smallest first</option>
+        <option value="duration-desc">Length: longest first</option>
+        <option value="duration-asc">Length: shortest first</option>
+      </select>
+      <select id="filterSel" class="plain" title="Filter">
+        <option value="">All</option>
+        <option value="fav">★ Favorites</option>
+        <option value="draft">With draft</option>
+        <option value="todo">Unedited</option>
+      </select>
+      <button id="selectBtn" title="Select several clips (e.g. to delete or export them)">Select</button>
+      <button id="batchBtn" title="Export saved edits in one go">⇪ Export drafts</button>
+    </div>
+  </div>
+  <div id="batchPanel" hidden>
+    <b>Export drafts</b>
+    <span class="small"> – exactly as you edited them, one after another. Originals stay untouched.</span>
+    <div id="batchList"></div>
+    <div class="opts">
+      <button id="bAll">All</button><button id="bOpen">Only not yet exported</button><button id="bNone">None</button>
+      <select id="bTrackSel" class="plain" title="Audio tracks in the exported files">
+        <option value="multi">Keep tracks separate (mix as track 1)</option>
+        <option value="single">One track (mix only)</option>
+      </select>
+      <select id="bSizeSel" class="plain" title="Size">
+        <option value="">Best quality</option>
+        <option value="20">Discord without Nitro – max. 20 MB</option>
+        <option value="50">Nitro Basic – max. 50 MB</option>
+      </select>
+      <button id="bStart" class="primary">Export</button>
+      <button id="bClose">Close</button>
+    </div>
+    <div class="progress"><div id="bBar"></div></div>
+    <div id="bMsg" class="small"></div>
+  </div>
+  <div id="selBar" hidden>
+    <b id="selInfo">0 selected</b>
+    <button id="selAll">All visible</button>
+    <button id="selOld" title="Older than 14 days, no draft, no export, not a favorite">Older than 14 days (unedited)</button>
+    <button id="selNone">None</button>
+    <div class="spacer"></div>
+    <button id="selExport">⇪ Export selected</button>
+    <button id="selDelete" class="danger">🗑 Move to recycle bin</button>
+    <button id="selCancel">Done</button>
+  </div>
+  <div id="libStatus" class="status"></div>
+  <div id="grid"></div>
+</section>
+
+<section id="editor" hidden>
+  <header>
+    <button id="back">← Library</button>
+    <h2 id="clipName"></h2>
+    <input id="noteInput" class="plain" type="text" maxlength="200" placeholder="Note (e.g. ace, 1v3 clutch) …">
+    <div class="spacer"></div>
+    <span id="edStatus" class="small"></span>
+  </header>
+  <div class="ed">
+    <div>
+      <video id="video" muted playsinline preload="auto"></video>
+      <div class="transport">
+        <button id="startBtn" title="Jump to trim start (Home)">⏮ Start</button>
+        <button id="prevFrame" title="One frame back (←)">◀ 1 frame</button>
+        <button id="playBtn" class="primary" disabled>▶ Play</button>
+        <button id="nextFrame" title="One frame forward (→)">1 frame ▶</button>
+        <select id="speedSel" class="plain" title="Preview speed (the export is always 1×)">
+          <option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option>
+          <option value="1.5">1.5×</option><option value="2">2×</option>
+        </select>
+        <span class="time" id="timeLabel">0:00.00 / 0:00.00</span>
+        <span class="outlen" id="outLen"></span>
+      </div>
+      <div id="timeline"><div id="tlScale"></div><div id="lanes"></div><div id="tlRegs"></div><div id="ph"></div></div>
+      <div class="tools">
+        <button id="btnIn">Set start <kbd>I</kbd></button>
+        <button id="btnOut">Set end <kbd>O</kbd></button>
+        <button id="btnMark">Set mark <kbd>M</kbd></button>
+        <button id="btnCut">Cut mark → playhead <kbd>X</kbd></button>
+        <span class="sep"></span>
+        <button id="undoBtn" disabled title="Undo (Ctrl+Z)">↶ Undo</button>
+        <button id="redoBtn" disabled title="Redo (Ctrl+Y)">↷ Redo</button>
+      </div>
+      <div class="hint"><kbd>Space</kbd> or click the video: play/pause · <kbd>Home</kbd> jump to start ·
+        <kbd>←</kbd>/<kbd>→</kbd> one frame · <kbd>I</kbd>/<kbd>O</kbd> trim start/end ·
+        <kbd>M</kbd> mark at playhead · <kbd>X</kbd> cut out mark → playhead ·
+        <kbd>Ctrl+Z</kbd>/<kbd>Ctrl+Y</kbd> undo/redo · click or drag the timeline to seek ·
+        drag the green trim edges and red cut edges to adjust them</div>
+    </div>
+    <aside>
+      <div class="box"><h3>Audio tracks</h3><div id="tracks"></div><div id="trackHint" class="small"></div></div>
+      <div class="box">
+        <h3>Cuts</h3>
+        <div id="trimInfo" class="small"></div>
+        <ul id="cuts"></ul>
+      </div>
+      <div class="box">
+        <h3 id="draftTitle">Draft</h3>
+        <div id="draftInfo" class="small"></div>
+        <button id="resetBtn" style="margin-top:8px">Reset edit</button>
+      </div>
+      <div class="box">
+        <h3>Export</h3>
+        <div class="sizeRow">
+          <select id="sizeSel">
+            <option value="">Best quality (default)</option>
+            <option value="20">Discord without Nitro – max. 20 MB</option>
+            <option value="50">Nitro Basic – max. 50 MB</option>
+            <option value="custom">Custom size …</option>
+          </select>
+          <span id="customWrap" hidden><input id="customMb" type="number" min="1" max="4000" step="1" value="25"> MB</span>
+        </div>
+        <div class="sizeRow">
+          <select id="trackSel" title="Audio tracks in the exported file">
+            <option value="multi">Keep tracks separate (mix as track 1)</option>
+            <option value="single">One track (mix only)</option>
+          </select>
+        </div>
+        <div id="planInfo" class="small"></div>
+        <div class="sizeRow">
+          <input id="outName" type="text" maxlength="150" placeholder="File name (empty = automatic)" style="flex:1;width:auto">
+          <span class="small">.mp4</span>
+        </div>
+        <button id="exportBtn" class="primary" disabled>Export MP4</button>
+        <div class="progress"><div id="progBar"></div></div>
+        <div id="exportMsg" class="small"></div>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<script>
+const $ = id => document.getElementById(id);
+const video = $('video'), tl = $('timeline');
+const LOCALE = 'en-GB';
+
+// ------------------------------------------------------------ helpers
+function fmt(t, cs = true) {
+  t = Math.max(0, t || 0);
+  const m = Math.floor(t / 60), s = t - m * 60;
+  return cs ? `${m}:${s.toFixed(2).padStart(5, '0')}` : `${m}:${String(Math.floor(s)).padStart(2, '0')}`;
+}
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const num = (v, digits = 1) => v.toLocaleString(LOCALE, {maximumFractionDigits: digits});
+const fmtSize = b => b >= 1e9 ? num(b / 1e9, 2) + ' GB' : Math.round(b / 1e6).toLocaleString(LOCALE) + ' MB';
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+async function api(url, body) {
+  const r = await fetch(url, body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)} : {});
+  const j = await r.json();
+  if (!r.ok || (j.error && !j.clips)) throw new Error(j.error || r.statusText);
+  return j;
+}
+function toast(html) {
+  let t = $('toast');
+  if (!t) { t = document.createElement('div'); t.id = 'toast'; document.body.appendChild(t); }
+  t.innerHTML = html + '<button>OK</button>';
+  t.querySelector('button').onclick = () => t.remove();
+}
+const store = {   // localStorage can be unavailable – never let that break the page
+  get(k, d) { try { return localStorage.getItem(k) ?? d; } catch (_) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} },
+};
+// Buttons must not keep the focus (otherwise Space would trigger them)
+document.addEventListener('mousedown', e => { if (e.target.closest('button')) e.preventDefault(); });
+
+// ------------------------------------------------------------ library
+let lib = [];
+async function loadLibrary(post) {
+  $('libStatus').className = 'status';
+  $('libStatus').textContent = 'Loading clips …';
+  const t0 = performance.now();
+  try {
+    const r = post ? await api('/api/config', post) : await api('/api/library');
+    lib = r.clips || [];
+    $('folderInput').value = r.folder || '';
+    $('exportInput').value = r.export_folder || '';
+    if (r.error) { $('libStatus').className = 'status err'; $('libStatus').textContent = `⚠ ${r.error} – ${r.folder}`; }
+    else $('libStatus').textContent = `${plural(lib.length, 'clip')} from ${r.folder}` +
+         (r.export_folder ? ` and ${r.export_folder}` : '') +
+         (r.processed ? ` · ${r.processed} new` : '') + ` · loaded in ${Math.round(performance.now() - t0)} ms`;
+    if (post) $('folderMsg').textContent = '✓ saved';
+  } catch (e) {
+    if (post) $('folderMsg').textContent = '⚠ ' + e.message;
+    else { $('libStatus').className = 'status err'; $('libStatus').textContent = '⚠ ' + e.message; }
+  }
+  renderGrid();
+}
+
+let libTab = store.get('libTab', 'orig') === 'edit' ? 'edit' : 'orig';
+function setTab(tab) { libTab = tab; store.set('libTab', tab); renderGrid(); }
+document.querySelector('.tabs').addEventListener('click', e => {
+  const b = e.target.closest('button[data-tab]');
+  if (b) setTab(b.dataset.tab);
+});
+
+const FILTERS = {
+  '': () => true,
+  fav: c => c.fav,
+  draft: c => c.has_draft,
+  todo: c => !c.has_draft && !c.has_export,          // neither a draft nor an export
+};
+let libFilter = store.get('libFilter', '');
+if (!(libFilter in FILTERS)) libFilter = '';
+$('filterSel').value = libFilter;
+$('filterSel').onchange = () => { libFilter = $('filterSel').value; store.set('libFilter', libFilter); renderGrid(); };
+
+const SORT_KEYS = {
+  date: (a, b) => a.mtime - b.mtime,
+  name: (a, b) => a.name.localeCompare(b.name, undefined, {numeric: true, sensitivity: 'base'}),
+  size: (a, b) => (a.size || 0) - (b.size || 0),
+  duration: (a, b) => (a.duration || 0) - (b.duration || 0),
+};
+let libSort = store.get('libSort', 'date-desc');
+if (!$('sortSel').querySelector(`option[value="${libSort}"]`)) libSort = 'date-desc';
+$('sortSel').value = libSort;
+$('sortSel').onchange = () => { libSort = $('sortSel').value; store.set('libSort', libSort); renderGrid(); };
+
+const clipId = c => c.dir + '|' + c.name;
+const findClip = card => lib.find(c => c.name === card.dataset.name && c.dir === card.dataset.dir);
+function visibleClips() {
+  const q = $('search').value.trim().toLowerCase();
+  const [key, dir] = libSort.split('-'), sign = dir === 'asc' ? 1 : -1;
+  return lib.filter(c => c.is_edit === (libTab === 'edit') && FILTERS[libFilter](c) &&
+                         (c.name.toLowerCase().includes(q) || (c.note || '').toLowerCase().includes(q)))
+            .sort((a, b) => sign * SORT_KEYS[key](a, b) || b.mtime - a.mtime);   // tie: newest first
+}
+
+function renderGrid() {
+  document.querySelectorAll('.tabs button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === libTab));
+  $('cntOrig').textContent = lib.filter(c => !c.is_edit).length;
+  $('cntEdit').textContent = lib.filter(c => c.is_edit).length;
+  const tabAll = lib.filter(c => c.is_edit === (libTab === 'edit'));
+  const list = visibleClips();
+  const sum = arr => arr.reduce((n, c) => n + (c.size || 0), 0);
+  $('libSummary').textContent = (list.length !== tabAll.length ? `${list.length} of ` : '') +
+    `${plural(tabAll.length, 'clip')} · ${fmtSize(sum(list))} · total ${fmtSize(sum(lib))}`;
+  $('batchBtn').textContent = `⇪ Export drafts (${lib.filter(c => c.has_draft).length})`;
+  $('grid').classList.toggle('selecting', selecting);
+  updateSelBar();
+  $('grid').innerHTML = list.map(c => {
+    const date = new Date(c.mtime * 1000).toLocaleString(LOCALE, {dateStyle: 'medium', timeStyle: 'short'});
+    let tracks;
+    if (c.error) tracks = `<span class="warn" title="${esc(c.error)}">⚠ Error: ${esc(c.error.slice(0, 60))}</span>`;
+    else if (c.tracks === 0) tracks = '<span class="warn">no audio</span>';
+    else if (c.tracks === 1) tracks = '<span class="warn">only 1 audio track</span>';
+    else tracks = `${c.tracks} audio tracks`;
+    return `<div class="card${c.error ? ' broken' : ''}" data-name="${esc(c.name)}" data-dir="${c.dir}">
+      <div class="thumb" style="${c.thumb ? `background-image:url('${c.thumb}')` : ''}">
+        ${c.thumb ? '' : '<div class="noimg">no thumbnail</div>'}
+        <div class="badges">${c.is_edit ? '<span class="badge">EDIT</span>' : ''}${c.has_draft
+          ? '<span class="badge draft" title="This clip has a saved edit">DRAFT</span>' : ''}</div>
+        ${c.duration ? `<span class="dur">${fmt(c.duration, false)}</span>` : ''}
+        ${c.is_edit && !c.error ? '<button class="yt" title="Upload to YouTube (unlisted)">▶ YouTube</button>' : ''}
+        <button class="del" title="Move to recycle bin">🗑</button>
+        ${selecting ? `<span class="check">${selected.has(clipId(c)) ? '✓' : ''}</span>` : ''}
+      </div>
+      <div class="meta">
+        <div class="nameRow"><div class="name" title="${esc(c.name)}">${esc(c.name)}</div>
+          <button class="noteBtn" title="Edit note">✎</button>
+          <button class="star${c.fav ? ' on' : ''}" title="Favorite">${c.fav ? '★' : '☆'}</button></div>
+        ${c.note ? `<div class="note" title="${esc(c.note)}">📝 ${esc(c.note)}</div>` : ''}
+        <div class="sub"><span>${date} · ${fmtSize(c.size || 0)}</span><span>${tracks}</span></div></div></div>`;
+  }).join('') || `<div class="small">${libTab === 'edit' && !libFilter ? 'No edited clips yet.' : 'No clips found.'}</div>`;
+  $('grid').querySelectorAll('.card').forEach(card => {
+    card.classList.toggle('sel', selected.has(card.dataset.dir + '|' + card.dataset.name));
+    attachScrub(card);
+  });
+}
+
+$('grid').addEventListener('click', e => {
+  const card = e.target.closest('.card');
+  if (!card) return;
+  const c = findClip(card);
+  if (e.target.closest('.star')) return setClipMeta(c, {fav: !c.fav});
+  if (e.target.closest('.noteBtn')) {
+    const note = prompt(`Note for "${c.name}":`, c.note || '');
+    return note === null ? undefined : setClipMeta(c, {note});
+  }
+  if (selecting) {                                   // selection mode: click toggles the selection
+    const id = clipId(c);
+    selected.has(id) ? selected.delete(id) : selected.add(id);
+    return renderGrid();
+  }
+  if (e.target.closest('.del')) return deleteClip(card.dataset.name, card.dataset.dir);
+  if (e.target.closest('.yt')) return uploadYouTube(card.dataset.name, card.dataset.dir);
+  if (!card.classList.contains('broken')) openClip(card.dataset.name, card.dataset.dir);
+});
+async function setClipMeta(c, changes) {             // favorite / note (library.json)
+  try {
+    const r = await api('/api/clipmeta', {name: c.name, dir: c.dir, ...changes});
+    c.fav = r.fav; c.note = r.note;
+  } catch (e) { toast(`<span class="err">⚠ ${esc(e.message)}</span>`); }
+  renderGrid();
+}
+$('search').addEventListener('input', renderGrid);
+$('refresh').onclick = () => loadLibrary();
+$('settingsBtn').onclick = () => { $('settings').hidden = !$('settings').hidden; $('folderMsg').textContent = ''; };
+$('saveFolder').onclick = () => {
+  lib = []; renderGrid();
+  loadLibrary({folder: $('folderInput').value, export_folder: $('exportInput').value});
+};
+
+// ---- hover preview: a sprite of 10 frames, the mouse position picks the frame
+const SPRITE_FRAMES = 10;
+function attachScrub(card) {
+  const th = card.querySelector('.thumb'), c = findClip(card);
+  if (!th || !c || c.error) return;
+  let bar = null;
+  th.onmouseenter = async () => {
+    if (!c.sprite && !c.spriteLoading) {               // not created yet: request it now
+      c.spriteLoading = true;
+      try { c.sprite = (await api(`/api/sprite?dir=${c.dir}&name=` + encodeURIComponent(c.name))).sprite; } catch (_) {}
+    }
+    if (c.sprite) new Image().src = c.sprite;           // preload
+  };
+  th.onmousemove = e => {
+    if (!c.sprite) return;
+    const r = th.getBoundingClientRect(), f = Math.max(0, Math.min(0.999, (e.clientX - r.left) / r.width));
+    const i = Math.floor(f * SPRITE_FRAMES);
+    th.style.backgroundImage = `url('${c.sprite}')`;
+    th.style.backgroundSize = `${SPRITE_FRAMES * 100}% 100%`;
+    th.style.backgroundPosition = `${i / (SPRITE_FRAMES - 1) * 100}% 0`;
+    if (!bar) { bar = document.createElement('div'); bar.className = 'scrub'; th.appendChild(bar); }
+    bar.style.width = (f * 100) + '%';
+  };
+  th.onmouseleave = () => {
+    th.style.backgroundImage = c.thumb ? `url('${c.thumb}')` : '';
+    th.style.backgroundSize = ''; th.style.backgroundPosition = '';
+    if (bar) { bar.remove(); bar = null; }
+  };
+}
+
+// ---- selection mode: export or delete several clips
+let selecting = false;
+const selected = new Set();
+function updateSelBar() {
+  $('selBar').hidden = !selecting;
+  $('selectBtn').classList.toggle('primary', selecting);
+  const sel = lib.filter(c => selected.has(clipId(c)));
+  const orig = sel.filter(c => !c.is_edit).length;
+  $('selInfo').textContent = `${sel.length} selected · ${fmtSize(sel.reduce((n, c) => n + (c.size || 0), 0))}` +
+    (orig ? ` · ${orig} of them original${orig === 1 ? '' : 's'}` : '');
+  $('selDelete').disabled = !sel.length;
+  const withDraft = sel.filter(c => c.has_draft).length;
+  $('selExport').disabled = !withDraft;
+  $('selExport').textContent = `⇪ Export selected${withDraft ? ` (${withDraft})` : ''}`;
+  $('selExport').title = withDraft < sel.length
+    ? `Only clips with a draft can be exported (${sel.length - withDraft} selected ${sel.length - withDraft === 1 ? 'has' : 'have'} none)`
+    : 'Export the selected clips as edited';
+}
+$('selectBtn').onclick = () => { selecting = !selecting; if (!selecting) selected.clear(); renderGrid(); };
+$('selCancel').onclick = () => { selecting = false; selected.clear(); renderGrid(); };
+$('selNone').onclick = () => { selected.clear(); renderGrid(); };
+$('selAll').onclick = () => { visibleClips().forEach(c => selected.add(clipId(c))); renderGrid(); };
+$('selOld').onclick = () => {                          // only selects – deleting needs a confirmation
+  const limit = Date.now() / 1000 - 14 * 86400;
+  visibleClips().filter(c => c.mtime < limit && !c.has_draft && !c.has_export && !c.fav)
+    .forEach(c => selected.add(clipId(c)));
+  renderGrid();
+};
+$('selExport').onclick = () => {
+  const sel = lib.filter(c => selected.has(clipId(c)) && c.has_draft).map(c => ({name: c.name, dir: c.dir}));
+  selecting = false; selected.clear(); renderGrid();
+  openBatch(sel);                                     // export list with exactly these clips checked
+};
+$('selDelete').onclick = async () => {
+  const sel = lib.filter(c => selected.has(clipId(c)));
+  if (!sel.length) return;
+  const orig = sel.filter(c => !c.is_edit).length;
+  const size = fmtSize(sel.reduce((n, c) => n + (c.size || 0), 0));
+  if (!confirm(`Move ${plural(sel.length, 'clip')} (${size}) to the recycle bin?` +
+      (orig ? `\n\nWARNING: ${orig === 1 ? 'one of them is an original recording' : `${orig} of them are original recordings`}.` : '') +
+      '\n\nYou can restore them from the recycle bin.')) return;
+  try {
+    const r = await api('/api/delete', {items: sel.map(c => ({name: c.name, dir: c.dir}))});
+    lib = r.clips || [];
+    selected.clear();
+    const errs = r.delete_errors || [];
+    $('libStatus').className = errs.length ? 'status err' : 'status';
+    $('libStatus').textContent = errs.length ? `⚠ ${errs.length} could not be deleted: ${errs.join(' · ')}`
+                                             : `Moved ${plural(sel.length, 'clip')} (${size}) to the recycle bin.`;
+  } catch (e) {
+    $('libStatus').className = 'status err'; $('libStatus').textContent = '⚠ ' + e.message;
+  }
+  renderGrid();
+};
+async function deleteClip(name, dir) {
+  const c = lib.find(x => x.name === name && x.dir === dir);
+  const warn = c && !c.is_edit ? '\n\nWARNING: this is an original recording.' : '';
+  if (!confirm(`Move "${name}" to the recycle bin?${warn}\n\nYou can restore it from there.`)) return;
+  try {
+    const r = await api('/api/delete', {name, dir});
+    lib = r.clips || [];
+    $('libStatus').className = 'status';
+    $('libStatus').textContent = `Moved "${name}" to the recycle bin.`;
+  } catch (e) {
+    $('libStatus').className = 'status err';
+    $('libStatus').textContent = '⚠ ' + e.message;
+  }
+  renderGrid();
+}
+
+// ---- YouTube (semi-automatic): open the upload page, select the file in Explorer, copy its path.
+// The upload itself happens in YouTube Studio – the API would force every upload from an
+// unaudited project to "private".
+async function uploadYouTube(name, dir) {
+  window.open('https://www.youtube.com/upload', '_blank', 'noopener');   // must happen inside the click
+  try {
+    const r = await api('/api/youtube', {name, dir});
+    let copied = false;
+    try { await navigator.clipboard.writeText(r.path); copied = true; } catch (_) {}
+    toast(`<b>YouTube upload opened.</b> "${esc(name)}" is selected in Explorer.<br>
+      1. Drag the file into the YouTube window${copied ? ' (or "Select files" → Ctrl+V → Enter – the path is copied)' : ''}<br>
+      2. Under <b>Visibility</b> choose <b>Unlisted</b> and save<br>
+      3. Copy the link and share it`);
+  } catch (e) {
+    toast(`<span class="err">⚠ ${esc(e.message)}</span>`);
+  }
+}
+
+// ---- export drafts (one after another, exactly as edited)
+let batchDrafts = [], batchRunning = false;
+// preselect: [{name, dir}] to check (from selection mode). Otherwise nothing is checked.
+async function openBatch(preselect = []) {
+  $('batchPanel').hidden = false;
+  $('batchList').innerHTML = '';
+  $('bMsg').textContent = 'Loading drafts …';
+  try {
+    batchDrafts = (await api('/api/drafts')).drafts;
+  } catch (e) { $('bMsg').innerHTML = `<span class="err">⚠ ${esc(e.message)}</span>`; return; }
+  const pre = new Set(preselect.map(p => p.dir + '|' + p.name));
+  $('batchList').innerHTML = batchDrafts.map((d, i) => `<label><input type="checkbox" data-i="${i}" ${pre.has(d.dir + '|' + d.name) ? 'checked' : ''}>
+      <span>${esc(d.name)} <span class="small">· output ${fmt(d.length, false)}</span>
+      ${d.exported ? '<span class="ok small">· ✓ already exported like this</span>' : ''}</span></label>`).join('')
+    || '<div class="small">No drafts yet. A draft is created as soon as you edit a clip in the editor.</div>';
+  const open = batchDrafts.filter(d => !d.exported).length;
+  $('bMsg').textContent = batchDrafts.length
+    ? `${plural(batchDrafts.length, 'draft')}, ${open} not exported yet. Check the ones you want to export.` : '';
+  updateBatchBtn();
+}
+function updateBatchBtn() {
+  const n = $('batchList').querySelectorAll('input:checked').length;
+  $('bStart').textContent = batchRunning ? 'Exporting …' : n ? `Export ${n} selected` : 'Nothing selected';
+  $('bStart').disabled = !n || batchRunning;
+  $('bTrackSel').disabled = !!$('bSizeSel').value;     // target size -> always mix only
+}
+$('batchBtn').onclick = () => $('batchPanel').hidden ? openBatch() : ($('batchPanel').hidden = true);
+$('bClose').onclick = () => { $('batchPanel').hidden = true; };
+$('batchList').addEventListener('change', updateBatchBtn);
+$('bSizeSel').onchange = updateBatchBtn;
+$('bAll').onclick = () => { $('batchList').querySelectorAll('input').forEach(x => x.checked = true); updateBatchBtn(); };
+$('bNone').onclick = () => { $('batchList').querySelectorAll('input').forEach(x => x.checked = false); updateBatchBtn(); };
+$('bOpen').onclick = () => {
+  $('batchList').querySelectorAll('input').forEach(x => x.checked = !batchDrafts[+x.dataset.i].exported);
+  updateBatchBtn();
+};
+$('bStart').onclick = async () => {
+  try { initAudio(); if (Notification.permission === 'default') Notification.requestPermission(); } catch (_) {}
+  const items = [...$('batchList').querySelectorAll('input:checked')].map(x => batchDrafts[+x.dataset.i])
+    .map(d => ({name: d.name, dir: d.dir}));
+  if (!items.length) return;
+  const target = $('bSizeSel').value ? +$('bSizeSel').value : null;
+  batchRunning = true; updateBatchBtn();
+  $('bBar').style.width = '0';
+  try {
+    const {job} = await api('/api/export_batch', {items, target_mb: target,
+                                                  multitrack: $('bTrackSel').value === 'multi' && !target});
+    while (true) {
+      await new Promise(r => setTimeout(r, 600));
+      const s = await api('/api/export/' + job);
+      $('bBar').style.width = (s.progress * 100).toFixed(1) + '%';
+      if (s.status === 'running') {
+        $('bMsg').textContent = `Clip ${s.index + 1} of ${s.count}: ${s.current} … ${Math.round(s.progress * 100)} %` +
+          (s.phase ? ` (${s.phase})` : '');
+        continue;
+      }
+      const ok = s.results.filter(r => !r.error).length;
+      $('bMsg').innerHTML = `<span class="${s.failed ? 'err' : 'ok'}">✓ ${ok} of ${s.count} exported</span> – see the "Edited" tab.<ul>` +
+        s.results.map(r => `<li>${esc(r.name)} → ${r.error ? `<span class="err">⚠ ${esc(r.error)}</span>`
+          : `<b>${esc(r.output)}</b> (${num(r.size_mb)} MB)`}</li>`).join('') + '</ul>';
+      notifyExport(!s.failed, `${ok} of ${s.count} drafts exported.`);
+      break;
+    }
+  } catch (e) {
+    $('bMsg').innerHTML = `<span class="err">⚠ ${esc(e.message)}</span>`;
+  }
+  batchRunning = false;
+  const msg = $('bMsg').innerHTML;                    // refresh the list, keep the result message
+  await openBatch(); $('bMsg').innerHTML = msg;
+  loadLibrary();
+};
+
+// ------------------------------------------------------------ editor state
+let ctx = null, master = null;
+let clip = null, openToken = 0;
+let trimIn = 0, trimOut = 0, cuts = [], mark = null, playhead = 0;
+let playing = false, sources = [], schedule = [], segIdx = -1, tickTimer = null;
+let rate = 1;                                         // preview speed
+
+// Brickwall limiter like alimiter in the export: -1 dBFS, 5 ms lookahead/attack, 50 ms release.
+// Below the limit the gain is exactly 1, so the preview is not altered.
+const LIMITER = `
+class Limiter extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.limit = 0.891;
+    this.L = Math.round(sampleRate * 0.005);
+    this.rel = 1 - Math.exp(-1 / (sampleRate * 0.05));
+    this.dl = [new Float32Array(this.L + 1), new Float32Array(this.L + 1)];
+    this.req = new Float32Array(this.L + 1).fill(1);
+    this.avg = new Float32Array(this.L).fill(1);
+    this.sum = this.L; this.p = 0; this.q = 0; this.h = 1;
+  }
+  process(inputs, outputs) {
+    const inp = inputs[0], out = outputs[0], N = out[0].length, L = this.L;
+    for (let n = 0; n < N; n++) {
+      let peak = 0;
+      for (let c = 0; c < 2; c++) {
+        const x = inp[c] ? inp[c][n] : (inp[0] ? inp[0][n] : 0);
+        this.dl[c][this.p] = x;
+        if (Math.abs(x) > peak) peak = Math.abs(x);
+      }
+      this.req[this.p] = peak > this.limit ? this.limit / peak : 1;
+      let m = 1;                                   // required reduction within the lookahead window
+      for (let k = 0; k <= L; k++) if (this.req[k] < m) m = this.req[k];
+      this.h = Math.min(m, this.h + (1 - this.h) * this.rel);
+      this.sum += this.h - this.avg[this.q]; this.avg[this.q] = this.h; this.q = (this.q + 1) % L;
+      const g = Math.min(1, this.sum / L), r = (this.p + 1) % (L + 1);   // r = oldest sample
+      out[0][n] = this.dl[0][r] * g; out[1][n] = this.dl[1][r] * g;
+      this.p = r;
+    }
+    return true;
+  }
+}
+registerProcessor('limiter', Limiter);`;
+const LIMITER_DELAY = 0.005;
+
+async function initAudio() {
+  if (ctx) return initAudio.ready;
+  ctx = new AudioContext();
+  initAudio.ready = (async () => {
+    const url = URL.createObjectURL(new Blob([LIMITER], {type: 'application/javascript'}));
+    await ctx.audioWorklet.addModule(url);
+    master = new AudioWorkletNode(ctx, 'limiter', {numberOfInputs: 1, numberOfOutputs: 1,
+      outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers'});
+    master.connect(ctx.destination);
+    initAudio.input = master;
+  })();
+  return initAudio.ready;
+}
+
+const snap = t => Math.round(t * clip.fps) / clip.fps;
+function keptRanges() {   // same as kept_ranges() in app.py
+  const fps = clip.fps;
+  const s = snap(trimIn), e = snap(trimOut);
+  const cs = cuts.map(([a, b]) => [Math.max(snap(a), s), Math.min(snap(b), e)]).sort((x, y) => x[0] - y[0]);
+  const out = []; let pos = s;
+  for (const [a, b] of cs) { if (a > pos) out.push([pos, a]); pos = Math.max(pos, b); }
+  if (pos < e) out.push([pos, e]);
+  return out.filter(([a, b]) => b - a > 0.5 / fps);
+}
+const outDuration = () => keptRanges().reduce((n, [a, b]) => n + b - a, 0);
+
+async function openClip(name, dir = 'clips') {
+  const token = ++openToken;
+  const audioReady = initAudio(); ctx.resume();   // create the AudioContext inside the click
+  $('library').hidden = true; $('editor').hidden = false;
+  $('clipName').textContent = name;
+  $('edStatus').textContent = 'Preparing audio tracks …';
+  $('playBtn').disabled = $('exportBtn').disabled = true;
+  $('tracks').innerHTML = ''; $('lanes').innerHTML = ''; $('trackHint').textContent = '';
+  $('exportMsg').textContent = ''; $('progBar').style.width = '0';
+  const lc = lib.find(c => c.name === name && c.dir === dir);
+  $('noteInput').value = lc ? lc.note || '' : '';
+  $('outName').value = '';
+  $('outName').placeholder = `File name (empty = ${name.replace(/\.mp4$/i, '').replace(/_edit\d*$/i, '')}_edit)`;
+  try {
+    const info = await api(`/api/open?dir=${dir}&name=` + encodeURIComponent(name));
+    await audioReady;
+    if (token !== openToken) return;
+    clip = info;
+    clip.duration = Math.floor(info.duration * info.fps + 1e-6) / info.fps;
+    trimIn = 0; trimOut = clip.duration; cuts = []; mark = null; playhead = 0;
+    video.src = info.video;
+    for (const t of clip.tracks) {
+      t.volume = 1; t.muted = false;
+      t.gain = ctx.createGain(); t.gain.connect(initAudio.input);
+    }
+    renderTracks();
+    const isEdit = clip.dir === 'edits';             // clips in the export folder are never drafts
+    $('draftTitle').textContent = isEdit ? 'Saved settings' : 'Draft';
+    if (info.draft) {
+      applyDraft(info.draft);
+      video.currentTime = playhead;
+      const when = new Date(info.draft.saved_at * 1000).toLocaleString(LOCALE, {dateStyle: 'medium', timeStyle: 'short'});
+      $('draftInfo').textContent = isEdit ? `↺ Loaded settings from ${when} (not a draft – this clip is already edited).`
+                                          : `↺ Loaded draft from ${when}.`;
+    } else $('draftInfo').textContent = isEdit ? 'Settings are saved automatically (not a draft).'
+                                               : 'Changes are saved automatically as a draft.';
+    lastSaved = JSON.stringify(draftBody());
+    resetHistory();
+    onEdit();
+    $('edStatus').textContent = `Loading ${plural(clip.tracks.length, 'audio track')} …`;
+    await Promise.all(clip.tracks.map(async t => {
+      const buf = await (await fetch(t.url)).arrayBuffer();
+      t.buffer = await ctx.decodeAudioData(buf);
+      t.env = envelope(t.buffer);
+    }));
+    if (token !== openToken) return;
+    drawLanes();
+    $('edStatus').textContent = `${clip.width}×${clip.height} · ${Math.round(clip.fps * 100) / 100} fps · ${plural(clip.tracks.length, 'audio track')}`;
+    $('playBtn').disabled = $('exportBtn').disabled = false;
+  } catch (e) {
+    if (token === openToken) $('edStatus').textContent = '⚠ ' + e.message;
+  }
+}
+
+function closeEditor() {
+  openToken++;
+  stopPlayback();
+  const saved = saveDraft();          // save the latest state before closing the clip
+  if (clip) clip.tracks.forEach(t => t.gain && t.gain.disconnect());
+  clip = null;
+  video.removeAttribute('src'); video.load();
+  $('editor').hidden = true; $('library').hidden = false;
+  saved.finally(() => loadLibrary());
+}
+$('back').onclick = closeEditor;
+
+// ------------------------------------------------------------ drafts (auto-save)
+// Trim, cuts, volumes, mutes and the playhead are saved to drafts.json in the project folder.
+let saveTimer = null, lastSaved = '';
+function draftState() {
+  return {start: trimIn, end: trimOut, cuts, playhead, tracks: clip.tracks.map(t => ({volume: t.volume, muted: t.muted}))};
+}
+function draftBody() {
+  const s = draftState();
+  const isDefault = s.start === 0 && s.end === clip.duration && !s.cuts.length && s.tracks.every(t => t.volume === 1 && !t.muted);
+  return {name: clip.name, dir: clip.dir, state: isDefault ? null : s};   // null = delete the draft
+}
+function scheduleSave() {
+  if (!clip) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveDraft, 700);
+}
+async function saveDraft() {
+  clearTimeout(saveTimer);
+  if (!clip) return;
+  const body = draftBody(), key = JSON.stringify(body), name = clip.name;
+  if (key === lastSaved) return;
+  lastSaved = key;
+  const show = html => { if (clip && clip.name === name) $('draftInfo').innerHTML = html; };
+  show('Saving …');
+  try {
+    await api('/api/draft', body);
+    const what = body.dir === 'edits' ? 'Settings' : 'Draft';
+    show(body.state ? `✓ ${what} saved automatically (${new Date().toLocaleTimeString(LOCALE)})`
+                    : 'Everything is at default – nothing to save.');
+  } catch (e) {
+    lastSaved = '';
+    show(`<span class="err">⚠ Saving failed: ${esc(e.message)}</span>`);
+  }
+}
+window.addEventListener('beforeunload', () => {   // closing / reloading: send the latest state
+  if (!clip) return;
+  const key = JSON.stringify(draftBody());
+  if (key !== lastSaved) navigator.sendBeacon('/api/draft', new Blob([key], {type: 'application/json'}));
+});
+function applyDraft(d) {
+  const D = clip.duration, cl = v => Math.max(0, Math.min(D, +v || 0));
+  trimIn = snap(cl(d.start)); trimOut = snap(cl(d.end));
+  if (trimOut <= trimIn) { trimIn = 0; trimOut = D; }
+  cuts = (d.cuts || []).map(([a, b]) => [snap(cl(a)), snap(cl(b))]).filter(([a, b]) => b > a);
+  playhead = snap(cl(d.playhead));
+  if (d.tracks && d.tracks.length === clip.tracks.length)
+    clip.tracks.forEach((t, i) => { setVolume(t, d.tracks[i].volume); setMuted(t, d.tracks[i].muted); });
+}
+$('resetBtn').onclick = () => {
+  if (!clip || !confirm('Reset trim, cuts and volumes of this clip?')) return;
+  trimIn = 0; trimOut = clip.duration; cuts = []; mark = null;
+  clip.tracks.forEach(t => { setVolume(t, 1); setMuted(t, false); });
+  $('trackHint').textContent = '';
+  onEdit(); saveDraft();
+};
+
+// ---- note in the editor
+$('noteInput').onchange = async () => {
+  if (!clip) return;
+  const {name, dir} = clip;
+  try {
+    const r = await api('/api/clipmeta', {name, dir, note: $('noteInput').value});
+    const c = lib.find(x => x.name === name && x.dir === dir);
+    if (c) c.note = r.note;
+  } catch (e) { toast(`<span class="err">⚠ ${esc(e.message)}</span>`); }
+};
+$('noteInput').onkeydown = e => { if (e.key === 'Enter') e.target.blur(); };
+
+// ------------------------------------------------------------ undo / redo
+// History of trim, cuts, volumes and mutes. Every finished change is one step.
+let hist = [], histIdx = 0;
+const snapshotState = () => JSON.stringify({trimIn, trimOut, cuts, tracks: clip.tracks.map(t => [t.volume, t.muted])});
+function updateUndoButtons() {
+  $('undoBtn').disabled = !clip || histIdx <= 0;
+  $('redoBtn').disabled = !clip || histIdx >= hist.length - 1;
+}
+function resetHistory() { hist = [snapshotState()]; histIdx = 0; updateUndoButtons(); }
+function commitHistory() {
+  if (!clip) return;
+  const s = snapshotState();
+  if (s === hist[histIdx]) return;
+  hist = hist.slice(0, histIdx + 1);
+  hist.push(s);
+  if (hist.length > 200) hist.shift();
+  histIdx = hist.length - 1;
+  updateUndoButtons();
+}
+function restoreHistory(i) {
+  const s = JSON.parse(hist[i]);
+  histIdx = i;
+  trimIn = s.trimIn; trimOut = s.trimOut; cuts = s.cuts;
+  clip.tracks.forEach((t, k) => { setVolume(t, s.tracks[k][0]); setMuted(t, s.tracks[k][1]); });
+  onEdit();
+  updateUndoButtons();
+}
+const undo = () => { if (clip && histIdx > 0) restoreHistory(histIdx - 1); };
+const redo = () => { if (clip && histIdx < hist.length - 1) restoreHistory(histIdx + 1); };
+$('undoBtn').onclick = undo;
+$('redoBtn').onclick = redo;
+
+// ------------------------------------------------------------ audio tracks
+const LANE_COLORS = ['#8a96a3', '#5dade2', '#3ecf8e', '#f5b041', '#af7ac5', '#48c9b0'];
+function applyGain(t) {
+  if (t.gain) t.gain.gain.setTargetAtTime(t.muted ? 0 : t.volume, ctx.currentTime, 0.01);
+}
+function setVolume(t, v) {
+  t.volume = v; t.slider.value = Math.round(v * 100); t.pct.textContent = t.slider.value + ' %'; applyGain(t);
+}
+function setMuted(t, m) {   // muting keeps the volume – it stays on the slider
+  t.muted = m;
+  t.btn.classList.toggle('on', m); t.el.classList.toggle('muted', m); t.lane.classList.toggle('muted', m);
+  t.btn.textContent = m ? 'Muted' : 'Mute';
+  applyGain(t);
+}
+// A mix track (e.g. OBS track 1) is the sum of the separate tracks. Changing a separate track means
+// you are mixing them yourself -> mute the mix track, otherwise you would hear everything twice.
+function autoMuteMix(changed) {
+  if (changed.is_mix) return;
+  const m = clip.tracks.find(t => t.is_mix && !t.muted);
+  if (m) {
+    setMuted(m, true);
+    $('trackHint').textContent = `"${m.title}" was muted automatically because you changed a separate track.`;
+  }
+}
+function renderTracks() {
+  $('tracks').innerHTML = clip.tracks.map((t, i) => `
+    <div class="track" data-i="${i}">
+      <div class="tname" style="color:${LANE_COLORS[i % LANE_COLORS.length]}">${esc(t.title)}</div>
+      <button class="mute">Mute</button>
+      <div class="row"><input type="range" min="0" max="200" step="1" value="100"><span class="pct">100 %</span></div>
+    </div>`).join('') || '<div class="small">This clip has no audio.</div>';
+  $('lanes').innerHTML = clip.tracks.map(t =>
+    `<div class="lane"><canvas></canvas><span class="lname">${esc(t.title)}</span></div>`).join('');
+  $('tracks').querySelectorAll('.track').forEach(el => {
+    const i = +el.dataset.i, t = clip.tracks[i];
+    t.el = el; t.btn = el.querySelector('.mute'); t.lane = $('lanes').children[i];
+    t.slider = el.querySelector('input'); t.pct = el.querySelector('.pct');
+    t.slider.oninput = () => { setVolume(t, t.slider.value / 100); autoMuteMix(t); scheduleSave(); updatePlan(); };
+    t.slider.onchange = commitHistory;               // one undo step when the slider is released
+    t.btn.onclick = () => { setMuted(t, !t.muted); autoMuteMix(t); scheduleSave(); updatePlan(); commitHistory(); };
+  });
+}
+
+// Level over time per track (RMS in small blocks) for the waveform lanes
+function envelope(buf, bins = 4000) {
+  const chs = Array.from({length: buf.numberOfChannels}, (_, c) => buf.getChannelData(c));
+  const n = buf.length, out = new Float32Array(bins);
+  for (let b = 0; b < bins; b++) {
+    const s = Math.floor(b * n / bins), e = Math.floor((b + 1) * n / bins);
+    let sum = 0;
+    for (const d of chs) for (let i = s; i < e; i++) sum += d[i] * d[i];
+    out[b] = Math.sqrt(sum / Math.max(1, (e - s) * chs.length));
+  }
+  return out;
+}
+function drawLanes() {
+  if (!clip) return;
+  const D = clip.duration, dpr = window.devicePixelRatio || 1;
+  clip.tracks.forEach((t, i) => {
+    const c = t.lane && t.lane.querySelector('canvas');
+    if (!c) return;
+    const W = Math.max(1, Math.round(c.clientWidth * dpr)), H = Math.max(1, Math.round(c.clientHeight * dpr));
+    c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    if (!t.env) return;
+    g.fillStyle = LANE_COLORS[i % LANE_COLORS.length];
+    const n = t.env.length, bd = t.buffer.duration;
+    for (let x = 0; x < W; x++) {
+      const a = Math.floor((x / W * D - t.offset) / bd * n), b = Math.ceil(((x + 1) / W * D - t.offset) / bd * n);
+      let v = 0;
+      for (let k = Math.max(0, a); k < Math.min(n, Math.max(b, a + 1)); k++) if (t.env[k] > v) v = t.env[k];
+      const h = Math.max(0, Math.min(1, (20 * Math.log10(v + 1e-9) + 60) / 60)) * (H - 4);   // -60..0 dB
+      if (h > 0.5) g.fillRect(x, (H - h) / 2, 1, h);
+    }
+  });
+}
+window.addEventListener('resize', drawLanes);
+
+// ------------------------------------------------------------ playback
+// The Web Audio clock is the master: all kept ranges are scheduled back to back, sample-accurate
+// (cuts = jumps, exactly like the export). The muted video follows.
+function startPlayback(pos) {
+  stopSources();
+  const ranges = keptRanges();
+  if (!ranges.length) return;
+  let i = ranges.findIndex(r => pos < r[1] - 1e-4);
+  if (i < 0) { i = 0; pos = ranges[0][0]; }
+  if (pos < ranges[i][0]) pos = ranges[i][0];
+  ctx.resume();
+  let t = ctx.currentTime + 0.06;
+  schedule = [];
+  for (let k = i; k < ranges.length; k++) {
+    const a = k === i ? pos : ranges[k][0], b = ranges[k][1];
+    schedule.push({start: t, a, b});
+    for (const tr of clip.tracks) {
+      if (!tr.buffer) continue;
+      let when = t, off = a - tr.offset, dur = b - a;     // off/dur in clip seconds, when in real time
+      if (off < 0) { when -= off / rate; dur += off; off = 0; }
+      if (dur <= 0 || off >= tr.buffer.duration) continue;
+      const src = ctx.createBufferSource();
+      src.buffer = tr.buffer; src.playbackRate.value = rate; src.connect(tr.gain);
+      src.start(when, off, dur);
+      sources.push(src);
+    }
+    t += (b - a) / rate;
+  }
+  playing = true; segIdx = -1;
+  video.currentTime = pos;
+  video.playbackRate = rate;
+  video.play().catch(() => {});
+  $('playBtn').textContent = '❚❚ Pause';
+  clearInterval(tickTimer);
+  tickTimer = setInterval(tick, 20);
+}
+function stopSources() {
+  for (const s of sources) { try { s.stop(); } catch (_) {} s.disconnect(); }
+  sources = [];
+}
+function stopPlayback() {
+  if (!playing) return;
+  playing = false;
+  clearInterval(tickTimer);
+  stopSources();
+  video.pause(); video.playbackRate = 1;
+  if (clip) { playhead = snap(playhead); showFrame(playhead); }
+  $('playBtn').textContent = '▶ Play';
+  updatePlayhead();
+  scheduleSave();
+}
+function tick() {   // runs every 20 ms during playback
+  if (!playing || !clip) return;
+  const now = ctx.currentTime - (ctx.outputLatency || ctx.baseLatency || 0) - LIMITER_DELAY;
+  let k = 0;
+  while (k + 1 < schedule.length && now >= schedule[k + 1].start) k++;
+  const seg = schedule[k];
+  const pos = seg.a + Math.max(0, now - seg.start) * rate;
+  if (k === schedule.length - 1 && pos >= seg.b) { playhead = seg.b; stopPlayback(); return; }
+  playhead = Math.min(pos, seg.b);
+  if (k !== segIdx) {                              // new range -> the video jumps too
+    if (segIdx !== -1) video.currentTime = playhead;
+    segIdx = k;
+  } else {
+    const drift = playhead - video.currentTime;    // gently pull the video towards the audio clock
+    if (Math.abs(drift) > 0.3) video.currentTime = playhead;
+    else video.playbackRate = rate * (1 + Math.max(-0.1, Math.min(0.1, drift * 2 / rate)));
+  }
+  updatePlayhead();
+}
+// Preview speed 0.25×–2× (pitch changes with it). The export is always 1×.
+$('speedSel').onchange = () => {
+  rate = +$('speedSel').value;
+  $('speedSel').blur();
+  if (playing) startPlayback(playhead);
+};
+function togglePlay() {
+  if (!clip || $('playBtn').disabled) return;
+  playing ? stopPlayback() : startPlayback(playhead);
+}
+$('playBtn').onclick = togglePlay;
+video.addEventListener('click', togglePlay);
+
+// ------------------------------------------------------------ timeline
+const pct = t => (t / clip.duration * 100) + '%';
+const region = (cls, a, b) => `<div class="reg ${cls}" style="left:${pct(a)};width:calc(${pct(b - a)})"></div>`;
+function renderTimeline() {
+  const D = clip.duration;
+  let h = '';
+  const step = D > 150 ? 30 : D > 40 ? 10 : D > 15 ? 5 : 1;
+  for (let s = 0; s < D; s += step) h += `<div class="tickline" style="left:${pct(s)}"></div><div class="tick" style="left:${pct(s)}">${fmt(s, false)}</div>`;
+  $('tlScale').innerHTML = h;
+  h = '';
+  if (trimIn > 0) h += region('out', 0, trimIn);
+  if (trimOut < D) h += region('out', trimOut, D);
+  for (const [a, b] of cuts) h += region('cut', a, b);
+  h += `<div class="reg edge" style="left:${pct(trimIn)}"></div><div class="reg edge" style="left:calc(${pct(trimOut)} - 2px)"></div>`;
+  if (mark !== null) h += `<div class="reg mark" style="left:${pct(mark)}"></div>`;
+  $('tlRegs').innerHTML = h;
+  updatePlayhead();
+}
+function updatePlayhead() {
+  if (!clip) return;
+  $('ph').style.left = `calc(${pct(playhead)} - 1px)`;
+  $('timeLabel').textContent = `${fmt(playhead)} / ${fmt(clip.duration)}`;
+}
+// Seek slightly past the frame start so rounding never shows the previous frame
+const showFrame = t => { video.currentTime = Math.min(clip.duration, t + 0.001); };
+function seekTo(t) {
+  playhead = snap(Math.max(0, Math.min(clip.duration, t)));
+  showFrame(playhead);
+  updatePlayhead();
+  scheduleSave();
+}
+let dragging = false, wasPlaying = false, dragEdge = null;
+const tlTime = e => { const r = tl.getBoundingClientRect(); return (e.clientX - r.left) / r.width * clip.duration; };
+// Find a trim edge or cut edge near the mouse -> drag it instead of seeking
+function edgeAt(e) {
+  const r = tl.getBoundingClientRect(), x = e.clientX - r.left, px = t => t / clip.duration * r.width;
+  const edges = [{k: 'in', t: trimIn}, {k: 'out', t: trimOut}];
+  cuts.forEach(([a, b], i) => edges.push({k: 'a', i, t: a}, {k: 'b', i, t: b}));
+  let best = null;
+  for (const ed of edges) {
+    const d = Math.abs(px(ed.t) - x);
+    if (d <= 7 && (!best || d < best.d)) best = {...ed, d};
+  }
+  return best;
+}
+function moveEdge(ed, t) {
+  const f = 1 / clip.fps, D = clip.duration;
+  t = snap(Math.max(0, Math.min(D, t)));
+  if (ed.k === 'in') trimIn = Math.min(t, trimOut - f);
+  else if (ed.k === 'out') trimOut = Math.max(t, trimIn + f);
+  else if (ed.k === 'a') cuts[ed.i][0] = Math.min(t, cuts[ed.i][1] - f);
+  else cuts[ed.i][1] = Math.max(t, cuts[ed.i][0] + f);
+  const v = ed.k === 'in' ? trimIn : ed.k === 'out' ? trimOut : cuts[ed.i][ed.k === 'a' ? 0 : 1];
+  renderTimeline();
+  seekTo(v);                                 // the playhead follows the edge -> you see the exact frame
+}
+tl.addEventListener('pointerdown', e => {
+  if (!clip) return;
+  dragging = true; wasPlaying = playing; stopPlayback();
+  try { tl.setPointerCapture(e.pointerId); } catch (_) {}
+  dragEdge = edgeAt(e);
+  if (dragEdge) { dragEdge.x0 = e.clientX; dragEdge.moved = false; seekTo(dragEdge.t); }   // a plain click moves nothing
+  else seekTo(tlTime(e));
+});
+tl.addEventListener('pointermove', e => {
+  if (!clip) return;
+  if (!dragging) { tl.style.cursor = edgeAt(e) ? 'ew-resize' : 'pointer'; return; }
+  if (!dragEdge) return seekTo(tlTime(e));
+  if (!dragEdge.moved && Math.abs(e.clientX - dragEdge.x0) < 3) return;
+  dragEdge.moved = true;
+  moveEdge(dragEdge, tlTime(e));
+});
+tl.addEventListener('pointerup', () => {
+  if (!dragging) return;
+  dragging = false;
+  if (dragEdge && dragEdge.moved) { cuts.sort((x, y) => x[0] - y[0]); onEdit(); }   // one undo step
+  dragEdge = null;
+  if (wasPlaying) startPlayback(playhead);
+});
+
+// ------------------------------------------------------------ trim + cuts
+function onEdit() {
+  renderTimeline();
+  $('trimInfo').innerHTML = `Start ${fmt(trimIn)} · End ${fmt(trimOut)}` +
+    (mark !== null ? ` · Mark ${fmt(mark)}` : '') +
+    (cuts.length ? '' : '<br>No segments cut out yet.');
+  $('cuts').innerHTML = cuts.map(([a, b], i) =>
+    `<li><span>✂ ${fmt(a)} – ${fmt(b)} <span class="small">(${(b - a).toFixed(2)} s)</span></span>
+     <button data-i="${i}">Remove</button></li>`).join('');
+  $('outLen').textContent = `Output: ${fmt(outDuration())}`;
+  if (playing) startPlayback(playhead);
+  scheduleSave();
+  updatePlan();
+  commitHistory();
+}
+$('cuts').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (b) { cuts.splice(+b.dataset.i, 1); onEdit(); }
+});
+function setIn()  { if (!clip) return; trimIn = snap(playhead); if (trimIn >= trimOut) trimOut = clip.duration; onEdit(); }
+function setOut() { if (!clip) return; trimOut = snap(playhead); if (trimOut <= trimIn) trimIn = 0; onEdit(); }
+function setMark() { if (!clip) return; mark = snap(playhead); onEdit(); }
+function cutSegment() {
+  if (!clip) return;
+  if (mark === null) { $('trimInfo').innerHTML = '<span class="err">Set a mark with M first, then move the playhead and press X.</span>'; return; }
+  const a = Math.min(mark, snap(playhead)), b = Math.max(mark, snap(playhead));
+  if (b - a < 0.5 / clip.fps) return;
+  cuts.push([a, b]); cuts.sort((x, y) => x[0] - y[0]);
+  mark = null; onEdit();
+}
+$('btnIn').onclick = setIn; $('btnOut').onclick = setOut; $('btnMark').onclick = setMark; $('btnCut').onclick = cutSegment;
+
+// ------------------------------------------------------------ navigation + keyboard
+function toStart() {             // jump to the trim start
+  if (!clip) return;
+  playing ? startPlayback(trimIn) : seekTo(trimIn);
+}
+function stepFrame(dir) {         // one frame back/forward (pauses playback)
+  if (!clip || $('playBtn').disabled) return;
+  stopPlayback();
+  seekTo(playhead + dir / clip.fps);
+}
+$('startBtn').onclick = toStart;
+$('prevFrame').onclick = () => stepFrame(-1);
+$('nextFrame').onclick = () => stepFrame(1);
+
+document.addEventListener('keydown', e => {
+  if ($('editor').hidden || !clip) return;
+  if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return;   // text fields: normal typing / Ctrl+Z
+  if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+    const k = e.key.toLowerCase();
+    if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+    else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
+    return;
+  }
+  if (e.altKey || e.metaKey) return;
+  const k = e.key.toLowerCase();
+  const onSlider = e.target.type === 'range';   // arrow keys then belong to the volume slider
+  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  else if (e.key === 'ArrowLeft' && !onSlider) { e.preventDefault(); stepFrame(-1); }
+  else if (e.key === 'ArrowRight' && !onSlider) { e.preventDefault(); stepFrame(1); }
+  else if (e.key === 'Home') { e.preventDefault(); toStart(); }
+  else if (k === 'i') setIn();
+  else if (k === 'o') setOut();
+  else if (k === 'm') setMark();
+  else if (k === 'x') cutSegment();
+});
+
+// ------------------------------------------------------------ export
+// Size: empty = best quality (CRF 18). Otherwise a target size in MB -> 2-pass with a calculated bitrate.
+function targetMb() {
+  const v = $('sizeSel').value;
+  if (!v) return null;
+  return v === 'custom' ? Math.max(1, +$('customMb').value || 0) : +v;
+}
+function exportBody() {
+  return {name: clip.name, dir: clip.dir, start: trimIn, end: trimOut, cuts, target_mb: targetMb(),
+          output_name: $('outName').value.trim() || null,
+          multitrack: $('trackSel').value === 'multi' && !targetMb(),
+          tracks: clip.tracks.map(t => ({index: t.index, volume: t.volume, muted: t.muted}))};
+}
+let planTimer = null;
+function updatePlan() {               // shows what the current length + size will result in
+  clearTimeout(planTimer);
+  planTimer = setTimeout(async () => {
+    if (!clip) return;
+    const sized = !!targetMb();
+    $('trackSel').disabled = sized;                   // target size -> always mix only
+    $('trackSel').title = sized ? 'With a target size only the mix is exported (saves space for the picture)' : '';
+    const name = clip.name;
+    if (!sized) {
+      let raw = 0;
+      try { raw = (await api('/api/plan', exportBody())).raw_tracks; } catch (_) {}
+      if (!clip || clip.name !== name) return;
+      const audio = raw ? `Audio: mix as track 1 + ${plural(raw, 'separate track')} (for further editing)`
+                        : 'Audio: one track (mix)';
+      $('planInfo').textContent = `Original resolution, ${Math.round(clip.fps)} fps, CRF 18 – file size depends on the content. ${audio}.`;
+      return;
+    }
+    try {
+      const {duration, plan: p} = await api('/api/plan', exportBody());
+      if (!clip || clip.name !== name) return;
+      const warn = /worse/.test(p.quality) ? ' class="err"' : '';
+      $('planInfo').innerHTML = `At ${fmt(duration)}: <b>${p.height}p${p.fps}</b> · ` +
+        `${num(p.video_kbps / 1000)} Mbit/s video · ${p.audio_kbps ? p.audio_kbps + ' kbit/s audio' : 'no audio'} · ` +
+        `quality: <span${warn}>${p.quality}</span> · audio: one track (mix)<br>Two passes – takes about 2–3× as long.`;
+    } catch (e) {
+      if (clip && clip.name === name) $('planInfo').innerHTML = `<span class="err">⚠ ${esc(e.message)}</span>`;
+    }
+  }, 250);
+}
+$('sizeSel').onchange = () => { $('customWrap').hidden = $('sizeSel').value !== 'custom'; updatePlan(); };
+$('customMb').oninput = updatePlan;
+$('trackSel').onchange = updatePlan;
+
+// When done: a short sound, plus a desktop notification + tab title if the window is in the background
+function notifyExport(ok, text) {
+  try {
+    const t0 = ctx.currentTime + 0.02;
+    (ok ? [660, 880] : [440, 330]).forEach((f, i) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = f; o.connect(g).connect(ctx.destination);
+      g.gain.setValueAtTime(0, t0 + i * 0.16);
+      g.gain.linearRampToValueAtTime(0.15, t0 + i * 0.16 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + i * 0.16 + 0.15);
+      o.start(t0 + i * 0.16); o.stop(t0 + i * 0.16 + 0.16);
+    });
+  } catch (_) {}
+  if (document.hidden) {
+    document.title = (ok ? '✓ ' : '⚠ ') + 'Export finished – ClipEditor';
+    try { if (Notification.permission === 'granted') new Notification('ClipEditor', {body: text}); } catch (_) {}
+  }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) document.title = 'ClipEditor'; });
+
+$('exportBtn').onclick = async () => {
+  if (!clip) return;
+  try { if (Notification.permission === 'default') Notification.requestPermission(); } catch (_) {}
+  const active = clip.tracks.filter(t => !t.muted && t.volume > 0).length;
+  $('exportBtn').disabled = true;
+  $('progBar').style.width = '0';
+  $('exportMsg').innerHTML = active ? 'Exporting …' : 'All tracks muted or at 0 % → exporting without audio …';
+  const name = clip.name;
+  try {
+    const {job} = await api('/api/export', exportBody());
+    while (true) {
+      await new Promise(r => setTimeout(r, 500));
+      const s = await api('/api/export/' + job);
+      $('progBar').style.width = (s.progress * 100).toFixed(1) + '%';
+      if (s.status === 'running') {
+        $('exportMsg').textContent = `Exporting … ${Math.round(s.progress * 100)} % (${s.encoder}${s.phase ? ', ' + s.phase : ''})`;
+        continue;
+      }
+      if (s.status === 'done') {
+        const audio = s.audio_tracks > 1 ? `${s.audio_tracks} audio tracks: mix + separate` : s.audio_tracks ? '1 audio track' : 'no audio';
+        $('exportMsg').innerHTML = `<span class="ok">✓ Saved as <b>${esc(s.output)}</b> (${num(s.size_mb)} MB, ${audio})</span>
+          in ${esc(s.output_dir)} – see the "Edited" tab.
+          <br><button id="ytBtn" style="margin-top:8px">▶ Upload to YouTube (unlisted)</button>`;
+        $('ytBtn').onclick = () => uploadYouTube(s.output, 'edits');
+        $('outName').value = '';
+        if (s.draft_removed && clip && clip.name === name) {   // the original is exported -> no longer a draft
+          lastSaved = JSON.stringify(draftBody());           // don't save it again right away
+          $('draftInfo').innerHTML = '<span class="ok">✓ Exported – no longer a draft.</span> ' +
+            'Further changes here would be saved as a new draft.';
+        }
+        notifyExport(true, `${s.output} (${num(s.size_mb)} MB) is ready.`);
+      } else {
+        $('exportMsg').innerHTML = `<span class="err">⚠ Export failed: ${esc(s.error)}</span>`;
+        notifyExport(false, 'Export failed.');
+      }
+      break;
+    }
+  } catch (e) {
+    $('exportMsg').innerHTML = `<span class="err">⚠ ${esc(e.message)}</span>`;
+  }
+  if (clip && clip.name === name) $('exportBtn').disabled = false;
+};
+
+// Heartbeat: in app mode the server quits once no window is open (never during an export)
+const ping = () => fetch('/api/ping').catch(() => {});
+ping(); setInterval(ping, 10000);
+window.addEventListener('pagehide', () => navigator.sendBeacon('/api/bye', new Blob(['{}'], {type: 'application/json'})));
+
+loadLibrary();
+</script>
+</body>
+</html>

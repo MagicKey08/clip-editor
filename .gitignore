@@ -1,0 +1,21 @@
+# per-user runtime data
+config.json
+drafts.json
+library.json
+*.tmp
+cache/
+app-profile/
+
+# file names used by early versions
+entwuerfe.json
+bibliothek.json
+appfenster/
+
+# FFmpeg binaries – download separately (see README)
+ffmpeg/
+
+# local test clips and machine-specific shortcuts
+test/
+*.lnk
+
+__pycache__/
