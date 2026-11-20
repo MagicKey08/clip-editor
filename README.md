@@ -36,6 +36,10 @@ Everything runs locally on your PC – nothing is uploaded anywhere.
 - Waveform lane per track – see at a glance when someone was talking
 - Trim start/end, cut out any number of segments, drag edges on the timeline – all frame-accurate
 - The preview plays exactly what the export will sound like (same mix, same limiter, cuts skipped)
+- **Look**: presets *Off*, *Subtle*, *Vivid* and *TikTok* (very saturated, punchy and crunchy-sharp, the
+  typical gaming-edit look), fine-tuned with sliders for saturation, contrast, gamma, brightness and sharpening.
+  The look is visible live in the player (WebGL), and **Exact preview** renders the current frame with
+  FFmpeg using exactly the export filters. The look is saved with the draft like every other setting.
 - Frame stepping, 0.25×–2× preview speed, undo/redo
 - A pre-mixed track (e.g. OBS track 1 "Mix") is muted automatically when you start mixing the separate tracks
 - Every change is saved automatically as a **draft** – close the app and continue later
@@ -47,6 +51,8 @@ Everything runs locally on your PC – nothing is uploaded anywhere.
 - **Target size** for sharing: *Discord without Nitro (20 MB)*, *Nitro Basic (50 MB)* or any size.
   Two-pass encoding with a calculated bitrate, automatically 720p when that looks better.
   The panel tells you the resulting resolution, bitrate and expected quality before you export.
+- The look is applied in every export: color first (`eq`), then scaling (target size), sharpening (`unsharp`)
+  always last. With the look set to *Off* the export is exactly the same as without this feature.
 - Custom file names, export all drafts in one go, sound + notification when done
 - **YouTube (unlisted)**: one click opens the upload page and selects the file in Explorer
 - Originals are never modified
@@ -91,12 +97,12 @@ On first start, click **⚙ Folders** and choose your clip folder (default: `~\V
 | `←` / `→` | One frame back / forward |
 | `I` / `O` | Set trim start / end at the playhead |
 | `M`, then `X` | Set a mark, then cut out everything between mark and playhead |
-| `Ctrl+Z` / `Ctrl+Y` | Undo / redo |
+| `Ctrl+Z` / `Ctrl+Y` | Undo / redo (trim, cuts, volumes, look) |
 | Drag on the timeline | Seek; drag the green trim edges or red cut edges to adjust them |
 
 ### Drafts
 
-A **draft** is an original clip you are working on. Trim, cuts, volumes and the playhead are saved
+A **draft** is an original clip you are working on. Trim, cuts, volumes, the look and the playhead are saved
 automatically and restored when you open the clip again. Once you export a draft it is done – the
 draft badge disappears. Clips in the *Edited* tab keep their settings too, they are just not drafts.
 
@@ -125,6 +131,8 @@ name (`mix_track_names` in `config.json`).
 | `export_folder` | Where exports are written |
 | `mix_track_names` | Track names treated as a pre-mixed "everything" track |
 
+Look presets and slider ranges live in `LOOK_PRESETS` / `LOOK_RANGES` in `app.py`.
+
 Video encoders are listed in `VIDEO_ENCODERS` / `ENCODER_ORDER` in `app.py`; NVENC is used when it
 works, otherwise libx264. Adding another encoder (e.g. AMD AMF) takes two lines – see the comment there.
 
@@ -150,6 +158,10 @@ works, otherwise libx264. Adding another encoder (e.g. AMD AMF) takes two lines 
 - The export cuts video and all tracks in one FFmpeg filter graph (`trim`/`atrim` + `concat`), mixes with
   `amix` (`normalize=0`, so your volumes stay as set) and protects against clipping with `alimiter`.
   The preview uses an equivalent lookahead limiter, so what you hear is what you get.
+- The look uses FFmpeg's `eq` (saturation on the chroma, contrast/brightness/gamma on the luma) and
+  `unsharp=5:5:<amount>` on the luma. The live preview is a WebGL shader that applies the same math to the
+  video's Y'CbCr values (BT.709, limited range). Browsers decode video slightly differently than FFmpeg, so
+  the live preview is a close approximation – **Exact preview** shows the real result.
 
 ## License
 

@@ -441,6 +441,7 @@ def clean_draft(s):
                    for t in s.get("tracks", [])][:32],
         "saved_at": time.time(),
         **({"auto": True} if s.get("auto") else {}),   # created automatically after an export
+        **({"look": lk} if (lk := clean_look(s.get("look"))) else {}),
     }
 
 
@@ -458,17 +459,19 @@ def save_draft(path, state):
         return drafts.get(key)
 
 
-def state_sig(start, end, cuts, tracks):
+def state_sig(start, end, cuts, tracks, look=None):
     """Fingerprint of an edit – tells whether a draft has already been exported exactly like this."""
     r = lambda v: round(float(v), 3)
     tr = [[r(t["volume"]), bool(t["muted"])] for t in sorted(tracks, key=lambda t: t["index"])]
-    return json.dumps([r(start), r(end), sorted([r(a), r(b)] for a, b in cuts), tr])
+    lk = clean_look(look)
+    lk = [lk[k] for k in LOOK_RANGES] if lk else None
+    return json.dumps([r(start), r(end), sorted([r(a), r(b)] for a, b in cuts), tr] + ([lk] if lk else []))
 
 
 def draft_request(src, where, d):
     """Build an export request from a saved draft."""
     return {"name": src.name, "dir": where, "start": d["start"], "end": d["end"], "cuts": d.get("cuts", []),
-            "tracks": [{"index": i, **t} for i, t in enumerate(d.get("tracks", []))]}
+            "tracks": [{"index": i, **t} for i, t in enumerate(d.get("tracks", []))], "look": d.get("look")}
 
 
 def list_drafts():
@@ -486,7 +489,7 @@ def list_drafts():
         req = draft_request(src, c["dir"], d)
         fps = meta.get(key, {}).get("fps") or 60
         length = sum(b - a for a, b in kept_ranges(req["start"], req["end"], req["cuts"], fps))
-        sig = state_sig(req["start"], req["end"], req["cuts"], req["tracks"])
+        sig = state_sig(req["start"], req["end"], req["cuts"], req["tracks"], req["look"])
         out.append({"name": c["name"], "dir": c["dir"], "saved_at": d.get("saved_at"), "length": length,
                     "exported": libmeta.get(key, {}).get("last_export_sig") == sig, "mtime": c["mtime"]})
     return out
@@ -598,6 +601,68 @@ def output_path(src, custom=None):
         n += 1
 
 
+# ---------------------------------------------------------------- look (color + sharpening)
+# eq works on the video's YUV values: saturation scales the chroma, contrast/brightness/gamma the luma.
+# unsharp sharpens the luma only (5x5). Neutral values = no filter at all = export exactly as without a look.
+LOOK_RANGES = {   # name: (min, max, neutral)
+    "saturation": (0.0, 3.0, 1.0),
+    "contrast": (0.5, 2.0, 1.0),
+    "gamma": (0.5, 2.0, 1.0),
+    "brightness": (-0.3, 0.3, 0.0),
+    "sharpen": (0.0, 3.0, 0.0),
+}
+LOOK_PRESETS = {
+    "off": {"saturation": 1.0, "contrast": 1.0, "gamma": 1.0, "brightness": 0.0, "sharpen": 0.0},
+    "subtle": {"saturation": 1.25, "contrast": 1.06, "gamma": 1.0, "brightness": 0.01, "sharpen": 0.5},
+    "vivid": {"saturation": 1.6, "contrast": 1.12, "gamma": 1.04, "brightness": 0.02, "sharpen": 1.0},
+    # tuned against a typical TikTok Valorant edit: very saturated, punchy, bright, crunchy edges
+    "tiktok": {"saturation": 2.0, "contrast": 1.18, "gamma": 1.08, "brightness": 0.03, "sharpen": 2.0},
+}
+
+
+def clean_look(look):
+    """Validated look values, or None when everything is neutral."""
+    if not isinstance(look, dict):
+        return None
+    out = {}
+    for k, (lo, hi, neutral) in LOOK_RANGES.items():
+        try:
+            v = float(look.get(k, neutral))
+        except (TypeError, ValueError):
+            v = neutral
+        out[k] = round(min(hi, max(lo, v)), 3) if math.isfinite(v) else neutral
+    if all(out[k] == r[2] for k, r in LOOK_RANGES.items()):
+        return None
+    if look.get("preset") in (*LOOK_PRESETS, "custom"):
+        out["preset"] = look["preset"]
+    return out
+
+
+def video_filters(look, scale_height=None):
+    """Picture chain after cutting: color (eq) -> optional scaling -> sharpening (unsharp) always last."""
+    f = []
+    if look and any(look[k] != LOOK_RANGES[k][2] for k in ("saturation", "contrast", "gamma", "brightness")):
+        f.append(f"eq=saturation={look['saturation']}:contrast={look['contrast']}"
+                 f":gamma={look['gamma']}:brightness={look['brightness']}")
+    if scale_height:
+        f.append(f"scale=-2:{scale_height}:flags=lanczos")
+    if look and look["sharpen"] > 0:
+        f.append(f"unsharp=5:5:{look['sharpen']}:5:5:0.0")
+    return f
+
+
+def render_frame(src, info, t, look, scale_height=None):
+    """One frame at UI time t with exactly the export's picture filters, as PNG bytes."""
+    seek = t + info["v_start"] - info["fmt_start"] + 0.5 / info["fps"]   # middle of the frame
+    vf = video_filters(look, scale_height) or ["null"]
+    r = subprocess.run([FFMPEG, "-v", "error", "-ss", f"{max(0.0, seek):.6f}", "-i", str(src), "-frames:v", "1",
+                        "-vf", ",".join(vf), "-f", "image2pipe", "-c:v", "png", "-"],
+                       capture_output=True, timeout=60, creationflags=NO_WINDOW)
+    if r.returncode != 0 or not r.stdout:
+        raise RuntimeError("Could not render the frame: " + r.stderr.decode("utf-8", "replace").strip()[-300:])
+    return r.stdout
+
+
 # Target-size export (e.g. Discord): libx264 in two passes with a calculated bitrate.
 SIZE_PRESET = "medium"       # slower than veryfast, but more quality per MB
 SIZE_AUDIO_KBPS = 128
@@ -622,9 +687,10 @@ def export_plan(info, total, has_audio, target_mb):
             "quality": quality}
 
 
-def build_ffmpeg_args(src, info, ranges, tracks, tmp_out, plan=None, pass_no=None, passlog=None, raw=()):
+def build_ffmpeg_args(src, info, ranges, tracks, tmp_out, plan=None, pass_no=None, passlog=None, raw=(), look=None):
     """Cut video + audio identically, mix the active tracks (volume -> amix normalize=0 -> alimiter).
-    raw = indices of tracks that are additionally kept as separate, unchanged tracks."""
+    raw = indices of tracks that are additionally kept as separate, unchanged tracks.
+    look = color/sharpening (see video_filters); None = picture untouched."""
     fps = info["fps"]
     shift = info["v_start"] - info["fmt_start"]       # UI time (0 = first frame) -> filter time
     half = 0.5 / fps                                   # half a frame: exactly (b-a)*fps frames per range
@@ -641,11 +707,11 @@ def build_ffmpeg_args(src, info, ranges, tracks, tmp_out, plan=None, pass_no=Non
             parts.append(f"[0:a:{j}]atrim=start={a + shift:.6f}:end={b + shift:.6f},"
                          f"asetpts=PTS-STARTPTS[a{j}_{k}]")
             concat_in += f"[a{j}_{k}]"
-    scale = plan and plan["scale"]
-    outs = ("[vcat]" if scale else "[vout]") + "".join(f"[c{j}]" for j in use)
+    vchain = video_filters(look, plan["height"] if plan and plan["scale"] else None)
+    outs = ("[vcat]" if vchain else "[vout]") + "".join(f"[c{j}]" for j in use)
     parts.append(f"{concat_in}concat=n={len(ranges)}:v=1:a={len(use)}{outs}")
-    if scale:
-        parts.append(f"[vcat]scale=-2:{plan['height']}:flags=lanczos[vout]")
+    if vchain:
+        parts.append("[vcat]" + ",".join(vchain) + "[vout]")
     for j in use:                                      # track goes into the mix AND stays separate -> split
         if j in act and j in raw:
             parts.append(f"[c{j}]asplit=2[x{j}][r{j}]")
@@ -709,7 +775,7 @@ def prepare_export(req):
     raw = []
     if req.get("multitrack") and not plan:
         raw = [i for i, t in enumerate(info["tracks"]) if not is_mix_track(t["title"])]
-    return src, info, ranges, tracks, total, plan, raw
+    return src, info, ranges, tracks, total, plan, raw, clean_look(req.get("look"))
 
 
 def draft_for_export(info, tracks, raw, total):
@@ -729,7 +795,7 @@ def draft_for_export(info, tracks, raw, total):
 
 def new_export_job(req):
     """Prepare an export and register it as a job (not started yet)."""
-    src, info, ranges, tracks, total, plan, raw = prepare_export(req)
+    src, info, ranges, tracks, total, plan, raw, look = prepare_export(req)
     custom = None
     if str(req.get("output_name") or "").strip():
         custom = clean_filename(req["output_name"])
@@ -739,8 +805,8 @@ def new_export_job(req):
     JOBS[job_id] = {"status": "running", "progress": 0.0, "output": None, "error": None, "plan": plan,
                     "encoder": "libx264 2-pass" if plan else pick_encoder(), "expected_duration": total,
                     "audio_tracks": (1 + len(raw)) if raw else int(any(not t["muted"] and t["volume"] > 0 for t in tracks))}
-    sig = state_sig(req["start"], req["end"], req.get("cuts", []), tracks)
-    return job_id, (job_id, src, info, ranges, tracks, total, plan, custom, raw, sig)
+    sig = state_sig(req["start"], req["end"], req.get("cuts", []), tracks, look)
+    return job_id, (job_id, src, info, ranges, tracks, total, plan, custom, raw, sig, look)
 
 
 def start_export(req):
@@ -806,24 +872,27 @@ def run_ffmpeg(args, job, total, lo, hi):
         raise RuntimeError("".join(err).strip()[-600:] or "FFmpeg error")
 
 
-def run_export(job_id, src, info, ranges, tracks, total, plan=None, custom=None, raw=(), sig=None):
+def run_export(job_id, src, info, ranges, tracks, total, plan=None, custom=None, raw=(), sig=None, look=None):
     job = JOBS[job_id]
     EXPORT_TMP.mkdir(parents=True, exist_ok=True)
     tmp_out = EXPORT_TMP / f"{job_id}.mp4"
     passlog = EXPORT_TMP / f"{job_id}-pass"
     try:
         if not plan:
-            run_ffmpeg(build_ffmpeg_args(src, info, ranges, tracks, tmp_out, raw=raw), job, total, 0, 1)
+            run_ffmpeg(build_ffmpeg_args(src, info, ranges, tracks, tmp_out, raw=raw, look=look), job, total, 0, 1)
         else:
             job["phase"] = "pass 1/2"
-            run_ffmpeg(build_ffmpeg_args(src, info, ranges, tracks, tmp_out, plan, 1, passlog), job, total, 0, 0.5)
+            run_ffmpeg(build_ffmpeg_args(src, info, ranges, tracks, tmp_out, plan, 1, passlog, look=look),
+                       job, total, 0, 0.5)
             job["phase"] = "pass 2/2"
-            run_ffmpeg(build_ffmpeg_args(src, info, ranges, tracks, tmp_out, plan, 2, passlog), job, total, 0.5, 1)
+            run_ffmpeg(build_ffmpeg_args(src, info, ranges, tracks, tmp_out, plan, 2, passlog, look=look),
+                       job, total, 0.5, 1)
             size = tmp_out.stat().st_size
             if size > plan["target_bytes"]:       # rare: one correction pass with a matching lower bitrate
                 job["phase"] = "correction pass"
                 plan = dict(plan, video_kbps=int(plan["video_kbps"] * plan["target_bytes"] / size * 0.95))
-                run_ffmpeg(build_ffmpeg_args(src, info, ranges, tracks, tmp_out, plan, 2, passlog), job, total, 0.5, 1)
+                run_ffmpeg(build_ffmpeg_args(src, info, ranges, tracks, tmp_out, plan, 2, passlog, look=look),
+                           job, total, 0.5, 1)
             if tmp_out.stat().st_size > plan["target_bytes"]:
                 raise RuntimeError("The file is still above the target size – please shorten the clip.")
         size_mb = tmp_out.stat().st_size / 1_000_000
@@ -941,6 +1010,9 @@ class Handler(BaseHTTPRequestHandler):
                             "width": info["width"], "height": info["height"],
                             "tracks": [dict(t, url=u, is_mix=is_mix_track(t["title"]))
                                        for t, u in zip(info["tracks"], urls)]})
+        elif path == "/api/looks":                    # look presets + slider ranges for the editor
+            self.send_json({"presets": LOOK_PRESETS,
+                            "ranges": {k: {"min": a, "max": b, "neutral": n} for k, (a, b, n) in LOOK_RANGES.items()}})
         elif path == "/api/drafts":                   # all your drafts, for "Export drafts"
             self.send_json({"drafts": list_drafts()})
         elif path == "/api/sprite":                   # create a hover sprite on demand
@@ -988,8 +1060,18 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/export_batch":        # export several drafts one after another
             self.send_json({"job": start_batch(body)})
         elif self.path == "/api/plan":                # preview: what the chosen size results in
-            *_, total, plan, raw = prepare_export(body)
+            *_, total, plan, raw, look = prepare_export(body)
             self.send_json({"duration": total, "plan": plan, "raw_tracks": len(raw)})
+        elif self.path == "/api/lookframe":           # exact preview: one frame with the export's picture filters
+            src, info, _, _, _, plan, _, look = prepare_export(body)
+            png = render_frame(src, info, float(body.get("time") or 0), look,
+                               plan["height"] if plan and plan["scale"] else None)
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(png)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(png)
         elif self.path == "/api/draft":
             src = clip_path(body.get("name"), body.get("dir", "clips"))
             state = body.get("state")

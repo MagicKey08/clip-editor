@@ -95,6 +95,14 @@
   .ed { display:grid; grid-template-columns:1fr 340px; gap:16px; padding:16px 20px; }
   @media (max-width:1000px) { .ed { grid-template-columns:1fr; } }
   video { width:100%; max-height:60vh; background:#000; border-radius:6px; display:block; cursor:pointer; }
+  .player { position:relative; }
+  .player canvas, .player .exact { position:absolute; inset:0; width:100%; height:100%; object-fit:contain;
+                                   background:#000; border-radius:6px; cursor:pointer; }
+  .player .exactLabel { position:absolute; left:8px; top:8px; background:#000c; font-size:12px; padding:3px 8px;
+                        border-radius:4px; pointer-events:none; }
+  .lrow { display:grid; grid-template-columns:76px 1fr 44px; gap:8px; align-items:center; font-size:12px; padding:2px 0; }
+  .lrow input[type=range] { width:100%; accent-color:var(--accent); }
+  .lrow .val { text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); }
   .transport { display:flex; align-items:center; gap:12px; margin:10px 0; flex-wrap:wrap; }
   .transport .time { font-variant-numeric:tabular-nums; }
   .transport .outlen { color:var(--muted); margin-left:auto; }
@@ -224,7 +232,12 @@
   </header>
   <div class="ed">
     <div>
-      <video id="video" muted playsinline preload="auto"></video>
+      <div class="player">
+        <video id="video" muted playsinline preload="auto"></video>
+        <canvas id="lookCanvas" hidden title="Live look preview – click to play/pause"></canvas>
+        <img id="exactImg" class="exact" hidden alt="Exact preview">
+        <span id="exactLabel" class="exactLabel" hidden>Exact preview (FFmpeg) – click to close</span>
+      </div>
       <div class="transport">
         <button id="startBtn" title="Jump to trim start (Home)">⏮ Start</button>
         <button id="prevFrame" title="One frame back (←)">◀ 1 frame</button>
@@ -259,6 +272,15 @@
         <h3>Cuts</h3>
         <div id="trimInfo" class="small"></div>
         <ul id="cuts"></ul>
+      </div>
+      <div class="box">
+        <h3>Look</h3>
+        <div class="sizeRow"><select id="lookSel" title="Color and sharpening preset"></select></div>
+        <div id="lookSliders"></div>
+        <div class="sizeRow" style="margin-top:8px">
+          <button id="exactBtn" title="Render the current frame with exactly the export filters (FFmpeg)">Exact preview</button>
+          <span id="lookInfo" class="small"></span>
+        </div>
       </div>
       <div class="box">
         <h3 id="draftTitle">Draft</h3>
@@ -753,6 +775,7 @@ async function openClip(name, dir = 'clips') {
       t.gain = ctx.createGain(); t.gain.connect(initAudio.input);
     }
     renderTracks();
+    setLook(null, 'off'); hideExact();
     const isEdit = clip.dir === 'edits';             // clips in the export folder are never drafts
     $('draftTitle').textContent = isEdit ? 'Saved settings' : 'Draft';
     if (info.draft) {
@@ -789,19 +812,22 @@ function closeEditor() {
   clip = null;
   video.removeAttribute('src'); video.load();
   $('editor').hidden = true; $('library').hidden = false;
+  lookCanvas.hidden = true; hideExact();
   saved.finally(() => loadLibrary());
 }
 $('back').onclick = closeEditor;
 
 // ------------------------------------------------------------ drafts (auto-save)
-// Trim, cuts, volumes, mutes and the playhead are saved to drafts.json in the project folder.
+// Trim, cuts, volumes, mutes, the look and the playhead are saved to drafts.json in the project folder.
 let saveTimer = null, lastSaved = '';
 function draftState() {
-  return {start: trimIn, end: trimOut, cuts, playhead, tracks: clip.tracks.map(t => ({volume: t.volume, muted: t.muted}))};
+  return {start: trimIn, end: trimOut, cuts, playhead, look: lookForSave(),
+          tracks: clip.tracks.map(t => ({volume: t.volume, muted: t.muted}))};
 }
 function draftBody() {
   const s = draftState();
-  const isDefault = s.start === 0 && s.end === clip.duration && !s.cuts.length && s.tracks.every(t => t.volume === 1 && !t.muted);
+  const isDefault = s.start === 0 && s.end === clip.duration && !s.cuts.length && !s.look &&
+                    s.tracks.every(t => t.volume === 1 && !t.muted);
   return {name: clip.name, dir: clip.dir, state: isDefault ? null : s};   // null = delete the draft
 }
 function scheduleSave() {
@@ -840,11 +866,13 @@ function applyDraft(d) {
   playhead = snap(cl(d.playhead));
   if (d.tracks && d.tracks.length === clip.tracks.length)
     clip.tracks.forEach((t, i) => { setVolume(t, d.tracks[i].volume); setMuted(t, d.tracks[i].muted); });
+  setLook(d.look || null, d.look && d.look.preset);
 }
 $('resetBtn').onclick = () => {
-  if (!clip || !confirm('Reset trim, cuts and volumes of this clip?')) return;
+  if (!clip || !confirm('Reset trim, cuts, volumes and look of this clip?')) return;
   trimIn = 0; trimOut = clip.duration; cuts = []; mark = null;
   clip.tracks.forEach(t => { setVolume(t, 1); setMuted(t, false); });
+  setLook(null, 'off'); hideExact();
   $('trackHint').textContent = '';
   onEdit(); saveDraft();
 };
@@ -862,9 +890,10 @@ $('noteInput').onchange = async () => {
 $('noteInput').onkeydown = e => { if (e.key === 'Enter') e.target.blur(); };
 
 // ------------------------------------------------------------ undo / redo
-// History of trim, cuts, volumes and mutes. Every finished change is one step.
+// History of trim, cuts, volumes, mutes and the look. Every finished change is one step.
 let hist = [], histIdx = 0;
-const snapshotState = () => JSON.stringify({trimIn, trimOut, cuts, tracks: clip.tracks.map(t => [t.volume, t.muted])});
+const snapshotState = () => JSON.stringify({trimIn, trimOut, cuts, tracks: clip.tracks.map(t => [t.volume, t.muted]),
+                                            look: {...look}});
 function updateUndoButtons() {
   $('undoBtn').disabled = !clip || histIdx <= 0;
   $('redoBtn').disabled = !clip || histIdx >= hist.length - 1;
@@ -885,6 +914,7 @@ function restoreHistory(i) {
   histIdx = i;
   trimIn = s.trimIn; trimOut = s.trimOut; cuts = s.cuts;
   clip.tracks.forEach((t, k) => { setVolume(t, s.tracks[k][0]); setMuted(t, s.tracks[k][1]); });
+  setLook(s.look, s.look.preset); hideExact(); startLookLoop();
   onEdit();
   updateUndoButtons();
 }
@@ -971,6 +1001,166 @@ function drawLanes() {
 }
 window.addEventListener('resize', drawLanes);
 
+// ------------------------------------------------------------ look (color + sharpening)
+// Same parameters as the export's eq + unsharp filters. The live preview is a WebGL shader that redoes
+// eq/unsharp on the video's YUV values; "Exact preview" renders the current frame with FFmpeg itself.
+const LOOK_KEYS = ['saturation', 'contrast', 'gamma', 'brightness', 'sharpen'];
+const LOOK_LABELS = {saturation: 'Saturation', contrast: 'Contrast', gamma: 'Gamma', brightness: 'Brightness', sharpen: 'Sharpen'};
+const PRESET_NAMES = {off: 'Off', subtle: 'Subtle', vivid: 'Vivid', tiktok: 'TikTok', custom: 'Custom'};
+let LOOKS = {presets: {off: {saturation: 1, contrast: 1, gamma: 1, brightness: 0, sharpen: 0}}, ranges: {}};
+let look = {...LOOKS.presets.off, preset: 'off'};
+const lookNeutral = l => LOOK_KEYS.every(k => l[k] === LOOKS.presets.off[k]);
+const lookForSave = () => lookNeutral(look) ? null : {...look};
+const lookName = () => PRESET_NAMES[look.preset] || 'Custom';
+function matchPreset() {
+  return Object.keys(LOOKS.presets).find(p => LOOK_KEYS.every(k => Math.abs(LOOKS.presets[p][k] - look[k]) < 1e-6)) || 'custom';
+}
+async function initLooks() {
+  try { LOOKS = await api('/api/looks'); } catch (_) {}
+  $('lookSel').innerHTML = Object.keys(LOOKS.presets).map(p => `<option value="${p}">${PRESET_NAMES[p] || p}</option>`).join('') +
+                           '<option value="custom" hidden>Custom</option>';
+  $('lookSliders').innerHTML = LOOK_KEYS.map(k => {
+    const r = LOOKS.ranges[k] || {min: 0, max: 3};
+    return `<label class="lrow">${LOOK_LABELS[k]}<input type="range" data-k="${k}" min="${r.min}" max="${r.max}" step="0.01">` +
+           `<span class="val" id="lv_${k}"></span></label>`;
+  }).join('');
+  $('lookSliders').querySelectorAll('input').forEach(s => {
+    s.oninput = () => { look[s.dataset.k] = +s.value; look.preset = matchPreset(); lookChanged(); };
+    s.onchange = commitHistory;                         // one undo step when the slider is released
+  });
+  $('lookSel').onchange = () => {
+    const p = $('lookSel').value;
+    if (LOOKS.presets[p]) setLook(LOOKS.presets[p], p);
+    $('lookSel').blur();
+    lookChanged(); commitHistory();
+  };
+  setLook(LOOKS.presets.off, 'off');
+}
+function setLook(values, preset) {                     // set values + UI (no saving)
+  for (const k of LOOK_KEYS) look[k] = values && values[k] !== undefined ? +values[k] : LOOKS.presets.off[k];
+  look.preset = preset || matchPreset();
+  updateLookUI();
+  renderLook();
+}
+function updateLookUI() {
+  $('lookSel').value = look.preset;
+  for (const k of LOOK_KEYS) {
+    const s = $('lookSliders').querySelector(`input[data-k="${k}"]`);
+    if (s) s.value = look[k];
+    if ($('lv_' + k)) $('lv_' + k).textContent = (k === 'brightness' && look[k] > 0 ? '+' : '') + look[k].toFixed(2);
+  }
+}
+function lookChanged() {                               // user changed the look
+  updateLookUI(); hideExact(); renderLook(); startLookLoop();
+  $('lookInfo').textContent = '';
+  scheduleSave(); updatePlan();
+}
+
+// ---- live preview (WebGL): video frame -> Y'CbCr (BT.709, limited range like the file) -> eq -> unsharp -> RGB
+const lookCanvas = $('lookCanvas');
+let gl = null, glU = {};
+const LOOK_VS = `attribute vec2 p; varying vec2 uv;
+void main() { uv = vec2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5); gl_Position = vec4(p, 0.0, 1.0); }`;
+const LOOK_FS = `precision highp float;
+uniform sampler2D tex; uniform vec2 px; uniform float sat, con, gam, bri, sharp;
+varying vec2 uv;
+const vec3 KY = vec3(0.2126, 0.7152, 0.0722);
+float lumaEq(vec3 c) {                     // eq's luma curve on the 8-bit code value
+  float v = (16.0 + 219.0 * dot(c, KY)) / 255.0;
+  v = con * (v - 0.5) + 0.5 + bri;
+  return v <= 0.0 ? 0.0 : clamp(pow(v, 1.0 / gam) * 256.0 / 255.0, 0.0, 1.0);
+}
+void main() {
+  vec3 c = texture2D(tex, uv).rgb;
+  float y = dot(c, KY);
+  vec2 ch = clamp(vec2((c.b - y) / 1.8556, (c.r - y) / 1.5748) * sat, -128.0 / 224.0, 127.0 / 224.0);
+  float v = lumaEq(c);
+  if (sharp > 0.0) {                       // unsharp 5x5 on luma (binomial 1 4 6 4 1 blur, like FFmpeg)
+    float blur = 0.0;
+    for (int i = 0; i < 5; i++) for (int j = 0; j < 5; j++) {
+      float wi = i == 2 ? 6.0 : (i == 1 || i == 3) ? 4.0 : 1.0;
+      float wj = j == 2 ? 6.0 : (j == 1 || j == 3) ? 4.0 : 1.0;
+      blur += wi * wj * lumaEq(texture2D(tex, uv + vec2(float(i) - 2.0, float(j) - 2.0) * px).rgb);
+    }
+    v = clamp(v + sharp * (v - blur / 256.0), 0.0, 1.0);
+  }
+  float yo = clamp((v * 255.0 - 16.0) / 219.0, 0.0, 1.0);
+  gl_FragColor = vec4(clamp(vec3(yo + 1.5748 * ch.y, yo - 0.1873 * ch.x - 0.4681 * ch.y, yo + 1.8556 * ch.x), 0.0, 1.0), 1.0);
+}`;
+function initGL() {
+  if (gl) return true;
+  gl = lookCanvas.getContext('webgl', {antialias: false, premultipliedAlpha: false});
+  if (!gl) return false;
+  const shader = (type, src) => {
+    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, shader(gl.VERTEX_SHADER, LOOK_VS)); gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, LOOK_FS));
+  gl.linkProgram(prog); gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'p');
+  gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+  for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST],
+                        [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+  for (const n of ['px', 'sat', 'con', 'gam', 'bri', 'sharp']) glU[n] = gl.getUniformLocation(prog, n);
+  return true;
+}
+function renderLook() {                                // draw the current video frame with the look
+  const on = !!clip && !lookNeutral(look);
+  lookCanvas.hidden = !on;
+  if (!on || !video.videoWidth || video.readyState < 2) return;
+  try { if (!initGL()) { lookCanvas.hidden = true; return; } }
+  catch (e) { console.error(e); lookCanvas.hidden = true; return; }   // no WebGL: plain video
+  const W = video.videoWidth, H = video.videoHeight;   // native resolution, so sharpening matches the export
+  if (lookCanvas.width !== W || lookCanvas.height !== H) { lookCanvas.width = W; lookCanvas.height = H; }
+  gl.viewport(0, 0, W, H);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video);
+  gl.uniform2f(glU.px, 1 / W, 1 / H);
+  gl.uniform1f(glU.sat, look.saturation); gl.uniform1f(glU.con, look.contrast); gl.uniform1f(glU.gam, look.gamma);
+  gl.uniform1f(glU.bri, look.brightness); gl.uniform1f(glU.sharp, look.sharpen);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+let lookLoopOn = false;
+function startLookLoop() {                             // redraw on every new video frame while a look is active
+  if (lookLoopOn || !video.requestVideoFrameCallback) return;
+  lookLoopOn = true;
+  const cb = () => {
+    if (!clip || lookNeutral(look)) { lookLoopOn = false; return; }
+    renderLook(); video.requestVideoFrameCallback(cb);
+  };
+  video.requestVideoFrameCallback(cb);
+}
+video.addEventListener('seeked', renderLook);
+video.addEventListener('loadeddata', () => { renderLook(); startLookLoop(); });
+lookCanvas.addEventListener('click', togglePlay);
+
+// ---- exact preview: FFmpeg renders the current frame with the export's picture filters
+function hideExact() { $('exactImg').hidden = $('exactLabel').hidden = true; }
+$('exactImg').addEventListener('click', hideExact);
+$('exactBtn').onclick = async () => {
+  if (!clip) return;
+  stopPlayback();
+  const name = clip.name;
+  $('lookInfo').textContent = 'Rendering …';
+  try {
+    const r = await fetch('/api/lookframe', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                              body: JSON.stringify({...exportBody(), time: playhead})});
+    if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+    const blob = await r.blob();
+    if (!clip || clip.name !== name) return;
+    if ($('exactImg').src.startsWith('blob:')) URL.revokeObjectURL($('exactImg').src);
+    $('exactImg').src = URL.createObjectURL(blob);
+    $('exactImg').hidden = $('exactLabel').hidden = false;
+    $('lookInfo').textContent = `Frame ${fmt(playhead)}` + (targetMb() ? ' (incl. scaling for the target size)' : '');
+  } catch (e) {
+    $('lookInfo').innerHTML = `<span class="err">⚠ ${esc(e.message)}</span>`;
+  }
+};
+
 // ------------------------------------------------------------ playback
 // The Web Audio clock is the master: all kept ranges are scheduled back to back, sample-accurate
 // (cuts = jumps, exactly like the export). The muted video follows.
@@ -1000,6 +1190,7 @@ function startPlayback(pos) {
     t += (b - a) / rate;
   }
   playing = true; segIdx = -1;
+  hideExact();
   video.currentTime = pos;
   video.playbackRate = rate;
   video.play().catch(() => {});
@@ -1039,6 +1230,7 @@ function tick() {   // runs every 20 ms during playback
     if (Math.abs(drift) > 0.3) video.currentTime = playhead;
     else video.playbackRate = rate * (1 + Math.max(-0.1, Math.min(0.1, drift * 2 / rate)));
   }
+  if (!video.requestVideoFrameCallback) renderLook();   // fallback for browsers without per-frame callbacks
   updatePlayhead();
 }
 // Preview speed 0.25×–2× (pitch changes with it). The export is always 1×.
@@ -1080,6 +1272,7 @@ function updatePlayhead() {
 // Seek slightly past the frame start so rounding never shows the previous frame
 const showFrame = t => { video.currentTime = Math.min(clip.duration, t + 0.001); };
 function seekTo(t) {
+  hideExact();
   playhead = snap(Math.max(0, Math.min(clip.duration, t)));
   showFrame(playhead);
   updatePlayhead();
@@ -1211,7 +1404,7 @@ function targetMb() {
 }
 function exportBody() {
   return {name: clip.name, dir: clip.dir, start: trimIn, end: trimOut, cuts, target_mb: targetMb(),
-          output_name: $('outName').value.trim() || null,
+          output_name: $('outName').value.trim() || null, look: lookForSave(),
           multitrack: $('trackSel').value === 'multi' && !targetMb(),
           tracks: clip.tracks.map(t => ({index: t.index, volume: t.volume, muted: t.muted}))};
 }
@@ -1230,7 +1423,8 @@ function updatePlan() {               // shows what the current length + size wi
       if (!clip || clip.name !== name) return;
       const audio = raw ? `Audio: mix as track 1 + ${plural(raw, 'separate track')} (for further editing)`
                         : 'Audio: one track (mix)';
-      $('planInfo').textContent = `Original resolution, ${Math.round(clip.fps)} fps, CRF 18 – file size depends on the content. ${audio}.`;
+      $('planInfo').textContent = `Original resolution, ${Math.round(clip.fps)} fps, CRF 18 – file size depends on the content. ${audio}.` +
+        (lookNeutral(look) ? '' : ` Look: ${lookName()}.`);
       return;
     }
     try {
@@ -1239,7 +1433,8 @@ function updatePlan() {               // shows what the current length + size wi
       const warn = /worse/.test(p.quality) ? ' class="err"' : '';
       $('planInfo').innerHTML = `At ${fmt(duration)}: <b>${p.height}p${p.fps}</b> · ` +
         `${num(p.video_kbps / 1000)} Mbit/s video · ${p.audio_kbps ? p.audio_kbps + ' kbit/s audio' : 'no audio'} · ` +
-        `quality: <span${warn}>${p.quality}</span> · audio: one track (mix)<br>Two passes – takes about 2–3× as long.`;
+        `quality: <span${warn}>${p.quality}</span> · audio: one track (mix)` +
+        (lookNeutral(look) ? '' : ` · look: ${lookName()}`) + '<br>Two passes – takes about 2–3× as long.';
     } catch (e) {
       if (clip && clip.name === name) $('planInfo').innerHTML = `<span class="err">⚠ ${esc(e.message)}</span>`;
     }
@@ -1317,6 +1512,7 @@ const ping = () => fetch('/api/ping').catch(() => {});
 ping(); setInterval(ping, 10000);
 window.addEventListener('pagehide', () => navigator.sendBeacon('/api/bye', new Blob(['{}'], {type: 'application/json'})));
 
+initLooks();
 loadLibrary();
 </script>
 </body>
